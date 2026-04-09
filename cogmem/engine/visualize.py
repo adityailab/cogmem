@@ -48,25 +48,33 @@ def visualize(cwd: str | None = None, output: str | None = None, no_open: bool =
     if not nodes:
         return "No memory to visualize. Run `cogmem bootstrap` first."
 
-    # Generate HTML
+    # Generate both HTML files so the toggle button works
     graph_data = {"nodes": nodes, "links": links, "regions": regions}
-    if mode == "3d":
-        html = _generate_html_3d(graph_data)
-    else:
-        html = _generate_html(graph_data)
+    html_2d = _generate_html(graph_data)
+    html_3d = _generate_html_3d(graph_data)
 
-    # Write output
+    # Determine base output dir
     if output:
-        out_path = Path(output)
+        base_dir = Path(output).parent
+        stem = Path(output).stem
     elif (cwd_path / ".memory").is_dir():
-        out_path = cwd_path / ".memory" / "brain.html"
+        base_dir = cwd_path / ".memory"
+        stem = "brain"
     elif repo_root and (repo_root / ".memory").is_dir():
-        out_path = repo_root / ".memory" / "brain.html"
+        base_dir = repo_root / ".memory"
+        stem = "brain"
     else:
-        out_path = cwd_path / "brain.html"
+        base_dir = cwd_path
+        stem = "brain"
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(html)
+    base_dir.mkdir(parents=True, exist_ok=True)
+    path_2d = base_dir / f"{stem}-2d.html"
+    path_3d = base_dir / f"{stem}-3d.html"
+
+    path_2d.write_text(html_2d)
+    path_3d.write_text(html_3d)
+
+    out_path = path_3d if mode == "3d" else path_2d
 
     if not no_open:
         webbrowser.open(f"file://{out_path.resolve()}")
@@ -609,6 +617,29 @@ svg {{
 #search input::placeholder {{
     color: rgba(255,255,255,0.2);
 }}
+.mode-btn {{
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-family: inherit;
+    color: rgba(255,255,255,0.4);
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    text-decoration: none;
+    transition: all 0.2s;
+    cursor: pointer;
+}}
+.mode-btn:hover {{
+    color: #e0e0e0;
+    background: rgba(255,255,255,0.1);
+}}
+.mode-btn.active {{
+    color: #4ECDC4;
+    background: rgba(78,205,196,0.15);
+    border-color: #4ECDC4;
+    pointer-events: none;
+}}
 </style>
 </head>
 <body>
@@ -616,6 +647,10 @@ svg {{
 <div id="controls">
     <h1>COGMEM</h1>
     <div class="subtitle">cognitive memory map</div>
+    <div id="mode-toggle" style="margin-top:10px;display:flex;gap:4px;">
+        <a class="mode-btn active" href="#">2D</a>
+        <a class="mode-btn" href="brain-3d.html">3D</a>
+    </div>
 </div>
 
 <div id="search">
@@ -1339,6 +1374,29 @@ canvas {{ display: block; }}
     font-size: 10px;
     opacity: 0.2;
 }}
+.mode-btn {{
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-family: inherit;
+    color: rgba(255,255,255,0.4);
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    text-decoration: none;
+    transition: all 0.2s;
+    cursor: pointer;
+}}
+.mode-btn:hover {{
+    color: #e0e0e0;
+    background: rgba(255,255,255,0.1);
+}}
+.mode-btn.active {{
+    color: #4ECDC4;
+    background: rgba(78,205,196,0.15);
+    border-color: #4ECDC4;
+    pointer-events: none;
+}}
 </style>
 </head>
 <body>
@@ -1346,6 +1404,10 @@ canvas {{ display: block; }}
     <div id="controls">
         <h1>COGMEM</h1>
         <div class="subtitle">3d cognitive memory</div>
+        <div id="mode-toggle" style="margin-top:10px;display:flex;gap:4px;">
+            <a class="mode-btn" href="brain-2d.html">2D</a>
+            <a class="mode-btn active" href="#">3D</a>
+        </div>
     </div>
     <div id="search">
         <input type="text" placeholder="Search memories..." id="search-input">
