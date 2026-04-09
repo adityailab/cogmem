@@ -114,6 +114,7 @@ def consolidate_repo(repo: RepoTier, dry_run: bool = False) -> str:
                 theme_episodes[kw].append(ep)
 
     existing_patterns = {p.name.lower() for p in repo.list_patterns()}
+    existing_gists_map = {g.target.lower(): g for g in repo.list_gists()}
 
     for theme, eps in theme_episodes.items():
         if len(eps) < 3:  # need at least 3 episodes to form a pattern
@@ -127,6 +128,14 @@ def consolidate_repo(repo: RepoTier, dry_run: bool = False) -> str:
         if not shared_files and dominant_emotion == "neutral":
             continue
 
+        # Find related gists for the affected modules
+        related_gist_ids = []
+        for f in shared_files[:5]:
+            module = Path(f).parts[0] if Path(f).parts else ""
+            for g in existing_gists_map.values():
+                if g.target.lower() == module.lower() and g.id not in related_gist_ids:
+                    related_gist_ids.append(g.id)
+
         pattern = Pattern(
             name=pattern_name,
             category=PatternCategory.BUG if dominant_emotion in ("pain", "frustration") else PatternCategory.DESIGN,
@@ -138,6 +147,7 @@ def consolidate_repo(repo: RepoTier, dry_run: bool = False) -> str:
             frequency=len(eps),
             last_seen=today.isoformat(),
             trigger_cues=[theme],
+            related_gists=related_gist_ids,
             strength=min(1.0, 0.3 + 0.1 * len(eps)),
             danger_level="medium" if dominant_emotion in ("pain", "danger") else "low",
         )
@@ -145,8 +155,17 @@ def consolidate_repo(repo: RepoTier, dry_run: bool = False) -> str:
             repo.save_pattern(pattern)
         stats["patterns_created"] += 1
 
-    # Phase 3 — Gist formation (update module gists from episodes)
-    # Group episodes by top-level directory to detect modules
+    # Phase 2.5 — Write pattern review prompt for LLM subagent
+    if theme_episodes and not dry_run:
+        pending_dir = repo.dir.resolve(".pending")
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        prompt = _build_pattern_review_prompt(
+            theme_episodes, repo.list_patterns()
+        )
+        (pending_dir / "pattern_review.md").write_text(prompt)
+        stats["prompts_written"] = stats.get("prompts_written", 0) + 1
+
+    # Phase 3 — Gist formation (update existing + write LLM prompts for new)
     module_episodes: dict[str, list[Episode]] = defaultdict(list)
     for ep in episodes:
         for f in ep.code_touched:
@@ -155,14 +174,12 @@ def consolidate_repo(repo: RepoTier, dry_run: bool = False) -> str:
                 module = parts[0] if not parts[0].startswith(".") else (parts[1] if len(parts) > 1 else parts[0])
                 module_episodes[module].append(ep)
 
-    existing_gists = {g.target.lower(): g for g in repo.list_gists()}
     for module, eps in module_episodes.items():
         if len(eps) < 2:
             continue
         gist_key = module.lower()
-        if gist_key in existing_gists:
-            gist = existing_gists[gist_key]
-            # Update formed_from with new episode ids
+        if gist_key in existing_gists_map:
+            gist = existing_gists_map[gist_key]
             new_refs = [ep.id for ep in eps if ep.id not in gist.formed_from]
             if new_refs:
                 gist.formed_from.extend(new_refs[-5:])
@@ -170,7 +187,16 @@ def consolidate_repo(repo: RepoTier, dry_run: bool = False) -> str:
                 if not dry_run:
                     repo.save_gist(gist)
                 stats["gists_updated"] += 1
-        # Don't auto-create gists — that requires LLM understanding
+
+        # Write LLM prompt for gist generation/update
+        if not dry_run and len(eps) >= 3:
+            pending_dir = repo.dir.resolve(".pending")
+            pending_dir.mkdir(parents=True, exist_ok=True)
+            prompt = _build_gist_generation_prompt(
+                module, eps, existing_gists_map.get(gist_key)
+            )
+            (pending_dir / f"gist_{module}.md").write_text(prompt)
+            stats["prompts_written"] = stats.get("prompts_written", 0) + 1
 
     # Phase 4 — Emotional recalibration
     emotions = repo.get_emotions()
@@ -401,12 +427,79 @@ def consolidate_apply(result_file: str, cwd: str | None = None) -> str:
         ws.save_gist(gist)
         applied += 1
 
-    # Clean up pending prompt
-    pending_prompt = ws.dir.resolve(".pending/consolidate_prompt.md")
-    if pending_prompt.exists():
-        pending_prompt.unlink()
+    # Apply pattern merges (from pattern review prompt)
+    for merge in results.get("patterns_to_merge", []):
+        from_names = merge.get("from_names", [])
+        into = merge.get("into", {})
+        if from_names and into:
+            # Delete old patterns
+            for pat in ws.list_patterns():
+                if pat.name in from_names:
+                    ws.dir.delete_file(f"patterns/{pat.filename}")
+            # Create merged pattern
+            pattern = Pattern(
+                name=into.get("name", ""),
+                category=into.get("category", PatternCategory.CROSS_REPO),
+                tier=Tier.WORKSPACE,
+                signature=into.get("signature", ""),
+                consequence=into.get("consequence", ""),
+                response=into.get("response", ""),
+                trigger_cues=into.get("trigger_cues", []),
+                last_seen=date.today().isoformat(),
+                strength=0.8,
+            )
+            ws.save_pattern(pattern)
+            applied += 1
 
-    return f"Applied {applied} consolidation results to workspace."
+    # Apply pattern updates
+    for update in results.get("patterns_to_update", []):
+        name = update.get("name", "")
+        updates = update.get("updates", {})
+        for pat in ws.list_patterns():
+            if pat.name == name:
+                for key, val in updates.items():
+                    if hasattr(pat, key):
+                        setattr(pat, key, val)
+                ws.save_pattern(pat)
+                applied += 1
+                break
+
+    # Apply gist updates (match by target for existing gists)
+    for gist_data in results.get("gist_updates", []):
+        target = gist_data.get("target", "")
+        existing = None
+        for g in ws.list_gists():
+            if g.target.lower() == target.lower():
+                existing = g
+                break
+        if existing:
+            for key in ("what_it_does", "why_it_exists", "how_it_works", "key_relationships", "judgment"):
+                if key in gist_data:
+                    setattr(existing, key, gist_data[key])
+            existing.last_updated = date.today().isoformat()
+            ws.save_gist(existing)
+        else:
+            gist = Gist(
+                scope=gist_data.get("scope", GistScope.MODULE),
+                target=target,
+                tier=Tier.WORKSPACE,
+                what_it_does=gist_data.get("what_it_does", ""),
+                why_it_exists=gist_data.get("why_it_exists", ""),
+                how_it_works=gist_data.get("how_it_works", ""),
+                key_relationships=gist_data.get("key_relationships", ""),
+                judgment=gist_data.get("judgment", "unknown"),
+                last_updated=date.today().isoformat(),
+            )
+            ws.save_gist(gist)
+        applied += 1
+
+    # Clean up pending prompts
+    pending_dir = ws.dir.resolve(".pending")
+    if pending_dir.is_dir():
+        for f in pending_dir.glob("*.md"):
+            f.unlink()
+
+    return f"Applied {applied} consolidation results."
 
 
 # ---------------------------------------------------------------------------
@@ -466,6 +559,107 @@ def _build_consolidation_prompt(
         '  "danger_zones": ["..."]',
         '}',
         '```',
+    ])
+
+    return "\n".join(lines)
+
+
+def _build_pattern_review_prompt(
+    theme_episodes: dict[str, list],
+    existing_patterns: list,
+) -> str:
+    """Build prompt for LLM to review episode clusters and suggest better patterns."""
+    lines = [
+        "# Pattern Review Task\n",
+        "Review the following episode clusters and existing patterns.",
+        "Suggest improvements: merge overlapping patterns, create new ones from",
+        "clusters that keyword matching missed, identify anti-patterns.\n",
+    ]
+
+    lines.append("## Existing Patterns\n")
+    for pat in existing_patterns:
+        lines.append(f"- **{pat.name}** ({pat.category}): {pat.signature}")
+        if pat.consequence:
+            lines.append(f"  Consequence: {pat.consequence}")
+        lines.append(f"  Seen {pat.frequency}x, strength: {pat.strength}")
+        lines.append("")
+
+    lines.append("## Episode Clusters by Theme\n")
+    for theme, eps in sorted(theme_episodes.items(), key=lambda x: -len(x[1])):
+        if len(eps) < 2:
+            continue
+        lines.append(f"### Theme: {theme} ({len(eps)} episodes)\n")
+        for ep in eps[:10]:
+            lines.append(f"- [{ep.date}] {ep.trigger}")
+            if ep.learned:
+                lines.append(f"  Learned: {ep.learned}")
+            if ep.emotion != "neutral":
+                lines.append(f"  Emotion: {ep.emotion} ({ep.intensity})")
+        lines.append("")
+
+    lines.extend([
+        "## Expected Output\n",
+        "Return a JSON object:",
+        "```json",
+        "{",
+        '  "patterns_to_create": [{"name": "...", "category": "bug|design|anti|smell", "signature": "...", "consequence": "...", "response": "...", "trigger_cues": [...]}],',
+        '  "patterns_to_merge": [{"from_names": ["...", "..."], "into": {"name": "...", "signature": "...", "consequence": "...", "response": "..."}}],',
+        '  "patterns_to_update": [{"name": "...", "updates": {"signature": "...", "response": "..."}}]',
+        "}",
+        "```",
+    ])
+
+    return "\n".join(lines)
+
+
+def _build_gist_generation_prompt(
+    module: str,
+    episodes: list,
+    existing_gist=None,
+) -> str:
+    """Build prompt for LLM to generate/update a module gist."""
+    lines = [
+        f"# Gist Generation: {module}\n",
+        f"Generate a semantic understanding (gist) for the `{module}` module",
+        "based on the following episodes.\n",
+    ]
+
+    if existing_gist:
+        lines.append("## Current Gist\n")
+        if existing_gist.what_it_does:
+            lines.append(f"What it does: {existing_gist.what_it_does}")
+        if existing_gist.why_it_exists:
+            lines.append(f"Why it exists: {existing_gist.why_it_exists}")
+        if existing_gist.how_it_works:
+            lines.append(f"How it works: {existing_gist.how_it_works}")
+        if existing_gist.judgment:
+            lines.append(f"Judgment: {existing_gist.judgment}")
+        lines.append("")
+
+    lines.append(f"## Episodes ({len(episodes)})\n")
+    for ep in episodes[:20]:
+        lines.append(f"- [{ep.date}] {ep.trigger}")
+        if ep.learned:
+            lines.append(f"  Learned: {ep.learned}")
+        if ep.emotion != "neutral":
+            lines.append(f"  Emotion: {ep.emotion} ({ep.intensity})")
+        if ep.code_touched:
+            lines.append(f"  Files: {', '.join(ep.code_touched[:5])}")
+        lines.append("")
+
+    lines.extend([
+        "## Expected Output\n",
+        "Return a JSON object:",
+        "```json",
+        "{",
+        f'  "target": "{module}",',
+        '  "what_it_does": "one sentence",',
+        '  "why_it_exists": "one sentence",',
+        '  "how_it_works": "2-3 sentences",',
+        '  "key_relationships": "what it connects to",',
+        '  "judgment": "fragile | solid | improving | unknown"',
+        "}",
+        "```",
     ])
 
     return "\n".join(lines)

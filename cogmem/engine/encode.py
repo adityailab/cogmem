@@ -20,6 +20,7 @@ from cogmem.models import (
 from cogmem.storage.index import extract_keywords
 from cogmem.tiers.repo import RepoTier
 from cogmem.tiers.workspace import WorkspaceTier, detect_workspace
+from cogmem.utils.emotion_detect import detect_emotion
 from cogmem.utils.repo_detect import detect_repo_for_file, find_project_root, find_repo_root
 
 
@@ -51,6 +52,17 @@ def encode(
     if not repos:
         # No git repo — use cwd if .memory/ exists or can be created
         repos.add(cwd_path)
+
+    # Auto-detect emotion if not explicitly set
+    if emotion == "neutral" and event:
+        file_context: dict[str, str] = {}
+        if repos:
+            repo_path = next(iter(repos))
+            r = RepoTier(repo_path)
+            if r.exists:
+                for tag in r.get_emotions().tags:
+                    file_context[tag.target] = tag.emotion
+        emotion, intensity = detect_emotion(event, file_context)
 
     today = date.today().isoformat()
     trigger = _extract_trigger(event)
@@ -167,7 +179,7 @@ def encode_git(since: str = "7d", cwd: str | None = None) -> str:
     index = repo.get_index()
 
     for commit in commits:
-        emotion, intensity = _detect_git_emotion(commit["subject"])
+        emotion, intensity = detect_emotion(commit["subject"])
 
         ep = Episode(
             date=commit["date"],
@@ -271,12 +283,15 @@ def encode_annotations(cwd: str | None = None) -> str:
 
         filepath, lineno, content = match.groups()
         rel_path = str(Path(filepath).relative_to(repo_root))
+        emotion, intensity = detect_emotion(content.strip())
 
         ep = Episode(
             date=today,
             trigger=f"annotation in {rel_path}:{lineno}",
             story=content.strip(),
             learned=content.strip(),
+            emotion=emotion,
+            intensity=intensity,
             code_touched=[rel_path],
             source=EpisodeSource.AUTO_GENERATED,
             source_confidence=0.8,
@@ -345,8 +360,18 @@ def _post_encode(
             if related:
                 episode.related_episodes = related[:3]
 
+    # 4. Link to entities matching touched files
+    if episode.code_touched:
+        for entity in repo.list_entities():
+            if any(entity.file_path in f or f in entity.file_path for f in episode.code_touched):
+                if entity.id not in episode.related_entities:
+                    episode.related_entities.append(entity.id)
+                if len(episode.related_entities) >= 10:
+                    break
+
     # Re-save episode if side effects modified it
-    if episode.triggered_prospective or episode.related_patterns or episode.related_episodes:
+    if (episode.triggered_prospective or episode.related_patterns
+            or episode.related_episodes or episode.related_entities):
         episode.save(str(repo.dir.resolve(f"episodes/{episode.filename}")))
 
     return notices
@@ -355,15 +380,12 @@ def _post_encode(
 def finalize_session(cwd: str | None = None) -> str:
     """Process queued hook events into episode(s).
 
-    Reads sessions/current.json, groups events by file cluster,
-    creates summary episodes, and clears the queue.
+    Groups events by temporal proximity (30-min gaps) and creates
+    one episode per cluster.
     """
-    from collections import defaultdict
-
     cwd_path = Path(cwd) if cwd else Path.cwd()
     repo_root = find_repo_root(cwd_path)
     if not repo_root:
-        # Fall back to cwd
         repo_root = cwd_path
 
     repo = RepoTier(repo_root)
@@ -383,43 +405,130 @@ def finalize_session(cwd: str | None = None) -> str:
     if not events:
         return "No session events to process."
 
-    # Group events by file
-    file_events: dict[str, list[dict]] = defaultdict(list)
-    for ev in events:
-        file_events[ev.get("file", "unknown")].append(ev)
+    # Cluster events by temporal proximity
+    clusters = _cluster_by_time(events)
 
     today = date.today().isoformat()
     index = repo.get_index()
     created = 0
 
-    # Create one episode per file cluster
-    files_touched = list(file_events.keys())
-    tools_used = set()
-    for ev_list in file_events.values():
-        for ev in ev_list:
-            tools_used.add(ev.get("tool", ""))
+    for cluster in clusters:
+        files = list({ev.get("file", "unknown") for ev in cluster})
+        tools = list({ev.get("tool", "") for ev in cluster})
+        meta = _cluster_metadata(cluster)
+        activity = _infer_activity_type(cluster)
 
-    ep = Episode(
-        date=today,
-        trigger=f"Session: edited {len(files_touched)} files",
-        story=f"Used {', '.join(tools_used)} on: {', '.join(files_touched[:10])}",
-        code_touched=files_touched,
-        source=EpisodeSource.AUTO_GENERATED,
-        source_confidence=0.6,
-        strength=0.8,
-        phase=Phase.VIVID,
-    )
-    ep.save(str(repo.dir.resolve(f"episodes/{ep.filename}")))
-    keywords = extract_keywords(" ".join(files_touched))
-    index.add_entry(keywords, f"episodes/{ep.filename}")
-    created += 1
+        duration_str = f"{meta['duration_minutes']}m" if meta["duration_minutes"] > 0 else "quick"
+        trigger = f"Session: {activity} on {len(files)} files ({duration_str})"
+        story = f"Used {', '.join(tools)} on: {', '.join(files[:10])}"
+        if meta["start_time"] and meta["end_time"]:
+            story += f"\nTime: {meta['start_time']} - {meta['end_time']}"
+
+        emotion, intensity = detect_emotion(story)
+
+        ep = Episode(
+            date=today,
+            trigger=trigger,
+            story=story,
+            emotion=emotion,
+            intensity=intensity,
+            code_touched=files,
+            source=EpisodeSource.AUTO_GENERATED,
+            source_confidence=0.6,
+            strength=0.8,
+            phase=Phase.VIVID,
+        )
+        ep.save(str(repo.dir.resolve(f"episodes/{ep.filename}")))
+        keywords = extract_keywords(" ".join(files))
+        index.add_entry(keywords, f"episodes/{ep.filename}")
+        created += 1
 
     repo.save_index(index)
-
-    # Clear session queue
     session_file.unlink()
 
-    return f"Finalized session: {created} episode from {len(events)} events ({len(files_touched)} files)."
+    return f"Finalized session: {created} episodes from {len(events)} events across {len(clusters)} clusters."
+
+
+def _cluster_by_time(
+    events: list[dict],
+    gap_threshold_minutes: int = 30,
+) -> list[list[dict]]:
+    """Group events by temporal proximity.
+
+    Events within gap_threshold_minutes of each other form one cluster.
+    """
+    if not events:
+        return []
+
+    # Sort by timestamp
+    def parse_ts(ev: dict) -> datetime:
+        ts = ev.get("timestamp", "")
+        try:
+            return datetime.fromisoformat(ts)
+        except (ValueError, TypeError):
+            return datetime.now()
+
+    sorted_events = sorted(events, key=parse_ts)
+
+    clusters: list[list[dict]] = [[sorted_events[0]]]
+    for ev in sorted_events[1:]:
+        prev_ts = parse_ts(clusters[-1][-1])
+        curr_ts = parse_ts(ev)
+        gap = (curr_ts - prev_ts).total_seconds() / 60
+
+        if gap > gap_threshold_minutes:
+            clusters.append([ev])
+        else:
+            clusters[-1].append(ev)
+
+    return clusters
+
+
+def _infer_activity_type(events: list[dict]) -> str:
+    """Infer activity type from tool names and file patterns."""
+    tools = {ev.get("tool", "").lower() for ev in events}
+    files = {ev.get("file", "").lower() for ev in events}
+
+    test_files = any("test" in f for f in files)
+    if test_files and "write" in tools:
+        return "testing"
+
+    if any(f.endswith((".md", ".txt", ".rst")) for f in files):
+        return "documenting"
+
+    write_count = sum(1 for ev in events if ev.get("tool", "").lower() in ("write", "edit"))
+    read_count = sum(1 for ev in events if ev.get("tool", "").lower() == "read")
+
+    if write_count == 0 and read_count > 0:
+        return "exploring"
+    if write_count > 3:
+        return "coding"
+
+    return "coding"
+
+
+def _cluster_metadata(cluster: list[dict]) -> dict:
+    """Extract start_time, end_time, duration from a cluster."""
+    timestamps = []
+    for ev in cluster:
+        ts = ev.get("timestamp", "")
+        try:
+            timestamps.append(datetime.fromisoformat(ts))
+        except (ValueError, TypeError):
+            continue
+
+    if not timestamps:
+        return {"start_time": None, "end_time": None, "duration_minutes": 0}
+
+    start = min(timestamps)
+    end = max(timestamps)
+    duration = int((end - start).total_seconds() / 60)
+
+    return {
+        "start_time": start.strftime("%H:%M"),
+        "end_time": end.strftime("%H:%M"),
+        "duration_minutes": duration,
+    }
 
 
 # ---------------------------------------------------------------------------

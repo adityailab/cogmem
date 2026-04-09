@@ -17,15 +17,16 @@ def compute_score(
 ) -> float:
     """Compute convergence score for a memory match.
 
-    Formula: keyword_match * convergence * emotional * recency * priming * tier
+    Formula: keyword_match * convergence * emotional * recency * priming * importance * tier
     """
     keyword_score = _keyword_match(memory, cues)
     convergence = _convergence_multiplier(memory, cues)
     emotional = _emotional_weight(memory, cues)
     recency = _recency_weight(memory)
     priming = _priming_bonus(memory, priming_context)
+    importance = _importance_weight(memory)
 
-    score = keyword_score * convergence * emotional * recency * priming * tier_weight
+    score = keyword_score * convergence * emotional * recency * priming * importance * tier_weight
     return round(score, 4)
 
 
@@ -110,6 +111,12 @@ def _priming_bonus(memory: dict, priming_context: Optional[dict]) -> float:
             bonus *= 1.3
 
     return bonus
+
+
+def _importance_weight(memory: dict) -> float:
+    """Boost memories that are frequently accessed. Logarithmic scaling capped at 2.0."""
+    access_count = memory.get("access_count", 0)
+    return min(2.0, 1.0 + math.log(1 + access_count) * 0.2)
 
 
 def _memory_text(memory: dict) -> str:

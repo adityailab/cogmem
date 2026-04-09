@@ -250,7 +250,7 @@ def _collect_repo(repo: RepoTier, nodes: list, links: list, regions: list) -> No
 
     entity_count = 0
     for filepath, ents in sorted(file_entities.items(), key=lambda x: -len(x[1])):
-        if entity_count > 80:
+        if entity_count > 300:
             break
         file_id = f"file:{filepath}"
         if not any(n["id"] == file_id for n in nodes):
@@ -264,7 +264,7 @@ def _collect_repo(repo: RepoTier, nodes: list, links: list, regions: list) -> No
                 "size": 3 + min(len(ents), 5),
             })
 
-        for e in ents[:5]:  # max 5 per file
+        for e in ents:  # all entities per file
             eid = f"entity:{e.file_path}:{e.name}"
             nodes.append({
                 "id": eid,
@@ -680,14 +680,14 @@ const REGION_COLORS = {{
     semantic:    '#45B7D1',
     spatial:     '#96CEB4',
     pattern:     '#FFEAA7',
-    emotional:   '#FF6B6B',
+    emotional:   '#E84393',
     prospective: '#DDA0DD',
     entity:      '#A0AEC0',
 }};
 
 const EMOTION_COLORS = {{
     pain:        '#FF4444',
-    danger:      '#FF6B35',
+    danger:      '#FF9F1C',
     frustration: '#FF8C42',
     trust:       '#4ECDC4',
     pride:       '#45B7D1',
@@ -1137,7 +1137,7 @@ searchInput.addEventListener('input', (e) => {{
 const legend = document.getElementById('legend');
 Object.entries(REGION_COLORS).forEach(([region, color]) => {{
     const count = nodes.filter(n => n.region === region).length;
-    if (count === 0) return;
+    // show all regions, even with zero count
     const item = document.createElement('div');
     item.className = 'legend-item active';
     item.innerHTML = `<div class="legend-dot" style="background:${{color}}"></div>${{region}} (${{count}})`;
@@ -1426,7 +1426,7 @@ const REGION_COLORS = {{
     semantic:    0x45B7D1,
     spatial:     0x96CEB4,
     pattern:     0xFFEAA7,
-    emotional:   0xFF6B6B,
+    emotional:   0xE84393,
     prospective: 0xDDA0DD,
     entity:      0x8090A0,
 }};
@@ -1436,19 +1436,19 @@ const REGION_COLORS_CSS = {{
     semantic:    '#45B7D1',
     spatial:     '#96CEB4',
     pattern:     '#FFEAA7',
-    emotional:   '#FF6B6B',
+    emotional:   '#E84393',
     prospective: '#DDA0DD',
     entity:      '#8090A0',
 }};
 
 const EMOTION_COLORS = {{
-    pain: 0xFF4444, danger: 0xFF6B35, frustration: 0xFF8C42,
+    pain: 0xFF4444, danger: 0xFF9F1C, frustration: 0xFF8C42,
     trust: 0x4ECDC4, pride: 0x45B7D1, relief: 0x96CEB4,
     curiosity: 0xDDA0DD, neutral: 0x556677,
 }};
 
 const EMOTION_COLORS_CSS = {{
-    pain: '#FF4444', danger: '#FF6B35', frustration: '#FF8C42',
+    pain: '#FF4444', danger: '#FF9F1C', frustration: '#FF8C42',
     trust: '#4ECDC4', pride: '#45B7D1', relief: '#96CEB4',
     curiosity: '#DDA0DD', neutral: '#556677',
 }};
@@ -1656,7 +1656,7 @@ links.forEach(l => {{
 // ---------------------------------------------------------------------------
 Object.entries(regionCenters3D).forEach(([region, pos]) => {{
     const count = nodes.filter(n => n.region === region).length;
-    if (count === 0) return;
+    // show all regions, even with zero count
     const sprite = makeTextSprite(region.toUpperCase(), {{
         fontSize: 14,
         color: REGION_COLORS_CSS[region] || '#ffffff',
@@ -1949,7 +1949,7 @@ searchInput.addEventListener('input', (e) => {{
 const legend = document.getElementById('legend');
 Object.entries(REGION_COLORS_CSS).forEach(([region, color]) => {{
     const count = nodes.filter(n => n.region === region).length;
-    if (count === 0) return;
+    // show all regions, even with zero count
     const item = document.createElement('div');
     item.className = 'legend-item active';
     item.innerHTML = `<div class="legend-dot" style="background:${{color}}"></div>${{region}} (${{count}})`;

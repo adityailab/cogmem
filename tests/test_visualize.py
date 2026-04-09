@@ -182,10 +182,13 @@ class TestVisualize:
             no_open=True,
         )
 
-        assert output_file.exists()
+        # Output generates both -2d.html and -3d.html from the stem
         assert "saved" in result.lower() or "visualization" in result.lower()
-
-        content = output_file.read_text()
+        # Check that at least one output exists in the same directory
+        output_dir = output_file.parent
+        html_files = list(output_dir.glob("test_output*.html"))
+        assert len(html_files) >= 1
+        content = html_files[0].read_text()
         assert "<!DOCTYPE html>" in content
         assert "three" in content.lower() or "d3" in content.lower()
 
@@ -203,8 +206,10 @@ class TestVisualize:
             no_open=True,
         )
 
-        content = output_file.read_text()
-        # Should contain references to our encoded data
+        # Both -2d and -3d files generated from the stem
+        html_files = list(populated_repo.glob("viz_test*.html"))
+        assert len(html_files) >= 1
+        content = html_files[0].read_text()
         assert "auth" in content.lower() or "episode" in content.lower()
 
     @patch("cogmem.engine.visualize.detect_workspace", return_value=None)
@@ -257,4 +262,4 @@ class TestVisualize:
         mock_global.return_value = mock_global_instance
 
         result = visualize(cwd=str(populated_repo), no_open=True)
-        assert "brain.html" in result
+        assert "brain-" in result and ".html" in result

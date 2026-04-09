@@ -36,6 +36,7 @@ class Episode(MemoryBase):
     people_involved: list[str] = Field(default_factory=list)
     related_episodes: list[str] = Field(default_factory=list)
     related_patterns: list[str] = Field(default_factory=list)
+    related_entities: list[str] = Field(default_factory=list)
     triggered_prospective: list[str] = Field(default_factory=list)
 
     source: str = EpisodeSource.LIVED

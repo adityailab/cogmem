@@ -25,6 +25,7 @@ class Pattern(MemoryBase):
     last_seen: Optional[str] = None
 
     trigger_cues: list[str] = Field(default_factory=list)
+    related_gists: list[str] = Field(default_factory=list)
     strength: float = 1.0
     danger_level: str = DangerLevel.LOW
     transferable: bool = False

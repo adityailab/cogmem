@@ -168,6 +168,17 @@ def bootstrap_workspace(workspace_path: Path, months: int = 6) -> str:
     )
     ws.save_gist(platform_gist)
 
+    # Step 4.5: Auto-detect cross-repo dependencies
+    from cogmem.utils.deps import detect_cross_repo_deps, build_service_topology
+    all_deps = []
+    for repo_path in repos:
+        deps = detect_cross_repo_deps(repo_path, repos)
+        all_deps.extend(deps)
+    if all_deps:
+        topology = build_service_topology(all_deps, [r.name for r in repos])
+        ws.update_spatial(topology)
+        results.append(f"  Detected {len(all_deps)} cross-repo dependencies")
+
     # Step 5: Find cross-repo episodes (correlated by time)
     cross_eps = _find_cross_repo_episodes(repos, months)
     for ep in cross_eps:

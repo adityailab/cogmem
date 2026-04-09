@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
@@ -67,7 +68,12 @@ def recall(
     allocation = allocate_budget(effective_task_type, budget)
 
     # Stage 7: Assembly + metamemory
-    return _assemble_output(all_matches, allocation, cues, effective_task_type)
+    output, included = _assemble_output(all_matches, allocation, cues, effective_task_type)
+
+    # Record access for included episodes
+    _record_access(included, cwd_path)
+
+    return output
 
 
 def search_memories(query: str, mem_type: str | None = None, cwd: str | None = None) -> str:
@@ -158,6 +164,27 @@ def get_intentions(cwd: str | None = None) -> str:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _record_access(included: list[dict], cwd_path: Path) -> None:
+    """Increment access_count and update last_accessed for recalled episodes."""
+    repo_root = find_project_root(cwd_path)
+    repo = RepoTier(repo_root)
+    if not repo.exists:
+        return
+
+    for m in included:
+        if m.get("_type") != "episode":
+            continue
+        filename = m.get("filename")
+        if not filename:
+            continue
+        ep = repo.load_episode(filename)
+        if ep is None:
+            continue
+        ep.access_count = ep.access_count + 1
+        ep.last_accessed = date.today().isoformat()
+        repo.save_episode(ep)
+
+
 def _determine_scope(
     cwd: Path, cues: CueSet, repo_only: bool, workspace_only: bool
 ) -> list[tuple[str, Path, float]]:
@@ -211,6 +238,7 @@ def _search_tier(
             data["_type"] = "episode"
             data["_score"] = compute_score(data, cues, tier_weight)
             data["_tier"] = "repo"
+            data["filename"] = ep.filename
             matches.append(data)
 
         # Gists — always load (small count, high value)
@@ -275,6 +303,7 @@ def _search_tier(
             data["_type"] = "episode"
             data["_score"] = compute_score(data, cues, tier_weight)
             data["_tier"] = "workspace"
+            data["filename"] = ep.filename
             matches.append(data)
 
         for g in ws.list_gists():
@@ -320,9 +349,13 @@ def _matches_cues(data: dict, cues: CueSet) -> bool:
 
 def _assemble_output(
     matches: list[dict], allocation: dict[str, int], cues: CueSet, task_type: str
-) -> str:
-    """Stage 7: Assemble final output within budget."""
-    sections: dict[str, list[str]] = {
+) -> tuple[str, list[dict]]:
+    """Stage 7: Assemble final output within budget.
+
+    Returns:
+        A tuple of (formatted output string, list of match dicts that were included).
+    """
+    sections: dict[str, list[tuple[str, dict]]] = {
         "gist": [],
         "episodes": [],
         "patterns": [],
@@ -353,11 +386,12 @@ def _assemble_output(
         section = type_to_section.get(m.get("_type", ""), "episodes")
         line = _format_memory_line(m, zoom_overrides)
         if line:
-            sections[section].append(line)
+            sections[section].append((line, m))
 
     # Build output within budget
     output_parts = []
     total_used = 0
+    included: list[dict] = []
 
     section_labels = {
         "gist": "UNDERSTANDING",
@@ -378,12 +412,13 @@ def _assemble_output(
         section_text = f"\n--- {label} ---\n"
         used = estimate_tokens(section_text)
 
-        for item in items:
-            item_tokens = estimate_tokens(item)
+        for item_text, item_match in items:
+            item_tokens = estimate_tokens(item_text)
             if used + item_tokens > budget:
                 break
-            section_text += item + "\n"
+            section_text += item_text + "\n"
             used += item_tokens
+            included.append(item_match)
 
         output_parts.append(section_text)
         total_used += used
@@ -392,7 +427,7 @@ def _assemble_output(
     meta = f"\n[Memory: {task_type} mode | {len(matches)} candidates | {total_used}/{sum(allocation.values())} tokens used]"
     output_parts.append(meta)
 
-    return "".join(output_parts)
+    return "".join(output_parts), included
 
 
 def _format_memory_line(m: dict, zoom_overrides: dict[str, str] | None = None) -> str:
