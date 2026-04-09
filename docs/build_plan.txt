@@ -1,0 +1,630 @@
+================================================================================
+COGMEM — FULL BUILD PLAN
+================================================================================
+Version:    1.0
+Date:       April 5, 2026
+Status:     Approved — ready for implementation
+================================================================================
+
+
+DECISIONS
+---------
+  Tooling:       Poetry
+  LLM strategy:  Claude Code subagents (no direct Anthropic API calls)
+  CLI framework: Click
+  Models:        Pydantic
+  Scope:         Full build (all 13 steps)
+
+
+================================================================================
+STEP 1 — PROJECT SCAFFOLDING
+================================================================================
+Status: [ ] Not started
+
+  Create:
+    pyproject.toml          Poetry config, CLI entry point "cogmem"
+    cogmem/__init__.py      Package init, version
+    cogmem/__main__.py      python -m cogmem support
+    cogmem/cli.py           Click CLI skeleton (groups only, no logic yet)
+
+  Directories:
+    cogmem/engine/
+    cogmem/models/
+    cogmem/tiers/
+    cogmem/storage/
+    cogmem/utils/
+    tests/
+
+  Dependencies:
+    click
+    pydantic
+    python-frontmatter
+    pyyaml
+
+  Verify:
+    poetry install succeeds
+    cogmem --help shows top-level help
+
+
+================================================================================
+STEP 2 — DATA MODELS (cogmem/models/)
+================================================================================
+Status: [ ] Not started
+
+  common.py
+    - MemoryType enum (episodic, semantic, spatial, pattern, emotional, prospective)
+    - Tier enum (repo, workspace, global)
+    - Phase enum (vivid, clear, fuzzy, fading, stub)
+    - EmotionType enum (pain, danger, trust, pride, frustration, relief, curiosity)
+    - DangerLevel enum (low, medium, high, critical)
+    - TaskType enum (bugfix, feature, refactor, understand, plan, explore, cross_repo)
+    - RetrievalBias enum (boost, demote, warn)
+    - GistScope enum (platform, codebase, module, component)
+    - PatternCategory enum (bug, design, anti, smell, cross_repo)
+    - Base model with to_markdown() and from_markdown() support
+
+  episode.py
+    - Episode model
+    - Fields: id, date, when, tier, trigger, story, learned, emotion,
+      intensity (0-1), code_touched [], repos_involved [], people_involved [],
+      related_episodes [], related_patterns [], triggered_prospective [],
+      source (lived|git-inferred|auto-generated), source_confidence,
+      strength, access_count, last_accessed, phase
+    - Three compression levels: full (~200 tok), summary (~50 tok), stub (~15 tok)
+    - Phase lifecycle logic: vivid (<7d), clear (7-30d), fuzzy (30-90d),
+      fading (90-180d), stub (>180d)
+
+  gist.py
+    - Gist model
+    - Fields: id, scope, target, tier, what_it_does, why_it_exists,
+      how_it_works, key_relationships, judgment (fragile|solid|improving|unknown),
+      confidence, formed_from [], contradictions [], last_updated, last_verified
+    - Four scope levels:
+        Level 0 — Platform identity (workspace, ~300 tokens)
+        Level 1 — Codebase identity (~200 tokens)
+        Level 2 — Module understanding (~100 tokens)
+        Level 3 — Component understanding (~50 tokens)
+
+  pattern.py
+    - Pattern model
+    - Fields: id, name, category, tier, signature, consequence, response,
+      seen_in [], frequency, last_seen, trigger_cues [], strength,
+      danger_level, transferable
+
+  emotion.py
+    - EmotionTag model
+    - Fields: target, emotion, intensity, reason, source_episodes [],
+      last_reinforced, retrieval_bias, zoom_override (full|summary|null)
+
+  spatial.py
+    - RepoSpatial model
+      Fields: surface [], middle [], deep [], landmarks [], neighborhoods []
+      Each entry: {path, description, feel}
+    - WorkspaceSpatial model
+      Fields: services [], data_flow [], shared_contracts [],
+      deployment, danger_zones []
+
+  prospective.py
+    - Prospective model
+    - Fields: id, intention, trigger, trigger_type, created_from,
+      priority, completed
+
+  entity.py
+    - CodeEntity model
+    - Fields: id, file_path, name, kind (function|class|method),
+      signature (~10 tokens), summary (~50 tokens)
+    - REPO-LEVEL ONLY (too granular for workspace/global)
+
+
+================================================================================
+STEP 3 — STORAGE LAYER (cogmem/storage/)
+================================================================================
+Status: [ ] Not started
+
+  filesystem.py
+    - MemoryDir class: manages a .memory/ or .cogmem/ directory
+    - ensure_dirs(): create subdirectories (episodes/, gist/, patterns/,
+      entities/, prospective/, sessions/)
+    - read_markdown(path) -> (frontmatter_dict, body_str)
+    - write_markdown(path, frontmatter_dict, body_str)
+    - read_json(path) -> dict
+    - write_json(path, data)
+    - list_files(subdir, pattern="*.md") -> [paths]
+    - delete_file(path)
+
+  index.py
+    - KeywordIndex class
+    - load(path) -> index dict
+    - save(path)
+    - add_entry(keywords: list[str], file_ref: str)
+    - remove_entry(file_ref: str)
+    - query(keywords: list[str]) -> list[(file_ref, match_count)]
+    - rebuild(memory_dir) — scan all memory files and rebuild index
+    - Index format: {"keyword": ["file_ref_1", "file_ref_2"]}
+
+
+================================================================================
+STEP 4 — TIER OPERATIONS (cogmem/tiers/)
+================================================================================
+Status: [ ] Not started
+
+  repo.py — RepoTier class
+    - __init__(repo_path): locates <repo>/.memory/
+    - init(): creates .memory/ structure
+    - save_episode(episode) / list_episodes() / load_episode(id)
+    - save_gist(gist) / list_gists() / load_gist(id)
+    - save_pattern(pattern) / list_patterns() / load_pattern(id)
+    - get_emotions() / update_emotions(emotion_tag)
+    - get_spatial() / update_spatial(spatial)
+    - save_prospective(p) / list_prospectives() / load_prospective(id)
+    - save_entity(entity) / list_entities() / load_entity(id)
+    - get_index() -> KeywordIndex
+    - get_meta() / update_meta()
+
+  workspace.py — WorkspaceTier class
+    - __init__(workspace_path): locates <workspace>/.cogmem/
+    - init(): creates .cogmem/ structure
+    - Same save/list/load methods but for workspace-level memories
+    - No entities (repo-level only)
+    - detect_workspace(cwd) -> workspace_path or None
+    - list_repos() -> [repo_paths]
+
+  global_mem.py — GlobalTier class
+    - __init__(): locates ~/.cognitive-memory/
+    - init(): creates global structure
+    - save_pattern(pattern) / list_patterns() / load_pattern(id)
+    - get_preferences() / update_preferences()
+
+
+================================================================================
+STEP 5 — UTILITIES (cogmem/utils/)
+================================================================================
+Status: [ ] Not started
+
+  repo_detect.py
+    - find_repo_root(path) -> path or None
+      Walk up directories looking for .git/
+    - find_workspace(path) -> path or None
+      Walk up looking for .cogmem/ or detect multiple .git/ siblings
+    - detect_repos_in_dir(path) -> [repo_paths]
+      Find all immediate child directories containing .git/
+
+  cues.py
+    - extract_cues(query: str) -> CueSet
+    - CueSet: keywords [], entities [], file_paths [], emotions [],
+      repo_references [], task_type_hints []
+    - Regex patterns for:
+      File paths, function names, class names
+      Emotion words (pain, bug, broken, dangerous, etc.)
+      Task type words (fix, add, refactor, understand, etc.)
+      Repo name references
+
+  scoring.py
+    - compute_score(memory, cues, tier_weight, priming_context) -> float
+    - Formula: keyword_match * convergence_multiplier * emotional_weight
+               * recency_weight * context_congruence * priming_bonus
+               * tier_adjustment
+    - Tier weights: current_repo=1.0, workspace=0.9, global=0.8, other_repo=0.7
+    - Recency weight: exponential decay based on last_accessed
+
+  tokens.py
+    - estimate_tokens(text: str) -> int
+      Rough: len(text) / 4
+    - truncate_to_budget(text: str, budget: int) -> str
+    - BUDGET_TABLE: dict mapping TaskType -> {episodes%, gist%, patterns%,
+      dangers%, entities%, spatial%, prospective%}
+      (values from spec Section 20, Stage 6)
+
+
+================================================================================
+STEP 6 — ENGINE: RECALL (cogmem/engine/recall.py)
+================================================================================
+Status: [ ] Not started
+
+  def recall(query, task_type=None, files=None, budget=3500, cwd=None):
+
+    Stage 1 — Cue extraction (<10ms)
+      cues = extract_cues(query)
+      if files: add file-derived cues
+
+    Stage 2 — Determine search scope
+      current_repo = find_repo_root(cwd)
+      workspace = find_workspace(cwd)
+      scopes = [("repo", current_repo, 1.0)]
+      if workspace:
+          scopes.append(("workspace", workspace, 0.9))
+          for repo in workspace.repos if cues reference them:
+              scopes.append(("repo", repo, 0.7))
+      scopes.append(("global", global_path, 0.8))
+
+    Stage 3 — Multi-tier search (<100ms)
+      For each scope: query keyword index, load matching memories
+
+    Stage 4 — Convergence scoring
+      Score each match using compute_score()
+
+    Stage 5 — Task type detection
+      If not provided: detect from cues (bugfix/feature/refactor/etc.)
+
+    Stage 6 — Budget allocation
+      Distribute budget across memory types per BUDGET_TABLE[task_type]
+      Select top memories within each type's budget
+
+    Stage 7 — Assembly + metamemory
+      Format output with sections: Understanding, Past Experiences,
+      Danger Warnings, Patterns, Reminders, Cross-repo Context
+      Add metamemory notes (confidence, cold spots)
+
+  Returns: formatted string (~3500 tokens)
+
+
+================================================================================
+STEP 7 — ENGINE: ENCODE (cogmem/engine/encode.py)
+================================================================================
+Status: [ ] Not started
+
+  def encode(event, emotion, intensity, code_touched, learned, **kwargs):
+    - Detect repos from code_touched
+    - Single repo -> repo-level episode
+    - Multiple repos -> workspace-level episode
+    - Create Episode object, save to appropriate tier
+    - Update emotions at appropriate tier
+    - Update keyword index
+    - Check/complete prospective memories
+    - Match against existing patterns
+
+  def encode_git(since="7d", repo_path=None):
+    - Parse git log --since=<since> --format=...
+    - Group commits by theme/files
+    - Create synthetic episodes (source="git-inferred", confidence=0.5)
+    - Detect emotional signals (revert, fix, hotfix -> pain)
+
+  def hook_encode(tool, tool_input_file):
+    - Read tool input to get file path
+    - Check emotional tags for the file
+    - Append to session event queue (.memory/sessions/current.json)
+    - Lightweight — full episode created at session end
+
+  def encode_annotations(repo_path=None):
+    - Grep for @memory: comments in source files
+    - Parse annotation content
+    - Create appropriate memory type
+
+
+================================================================================
+STEP 8 — ENGINE: CONSOLIDATION (cogmem/engine/consolidate.py)
+================================================================================
+Status: [ ] Not started
+
+  def consolidate(scope="full", cwd=None):
+
+    if scope in ("full", "repo"):
+      consolidate_repo(repo):
+        Phase 1 — Episode compression
+          Move episodes to appropriate phase based on age
+          Compress narrative at each transition
+        Phase 2 — Pattern extraction
+          Find recurring themes across episodes
+          Create/strengthen pattern memories
+        Phase 3 — Gist formation
+          Update module/component gists from episodes
+        Phase 4 — Emotional recalibration
+          Adjust intensity based on recent reinforcement
+        Phase 5 — Pruning
+          Delete stub episodes that have been consolidated
+          Remove orphaned entities
+
+    if scope in ("full", "workspace"):
+      consolidate_workspace(workspace):
+        Phase W1 — Cross-repo pattern detection
+          Prepare context from all repos' recent episodes
+          Write prompt to .cogmem/.pending/consolidate_prompt.md
+          Return instructions for subagent
+        Phase W2 — Workspace gist update
+          Check if repo gists changed significantly
+        Phase W3 — Cross-repo emotional recalibration
+          Adjust workspace danger tags
+
+    if scope in ("full", "global"):
+      consolidate_global():
+        Find repo patterns with transferable=true
+        Copy to ~/.cognitive-memory/patterns/ if not already there
+
+  def consolidate_apply(result_file):
+    - Parse subagent result
+    - Apply changes to workspace memory
+
+  SUBAGENT PATTERN:
+    cogmem consolidate writes prompt to .pending/
+    Returns message: "Run consolidation subagent to process"
+    Subagent skill reads prompt, processes, writes result
+    cogmem consolidate --apply <result> applies changes
+
+
+================================================================================
+STEP 9 — ENGINE: DECAY (cogmem/engine/decay.py)
+================================================================================
+Status: [ ] Not started
+
+  DECAY_RATES = {
+    "episode":     0.05,    # half-life ~14 days
+    "gist":        0.005,   # half-life ~140 days
+    "pattern":     0.01,    # half-life ~70 days
+    "emotion":     0.002,   # half-life ~350 days
+    "emotion_pain": 0.001,  # half-life ~700 days
+    "spatial":     0.003,   # half-life ~230 days
+    "prospective": 0.02,    # half-life ~35 days
+  }
+
+  def run_decay(cwd=None):
+    - Load all memories from repo tier
+    - Apply strength = strength * exp(-rate * days_since_access)
+    - Workspace memories: rate *= 0.7
+    - Global patterns: no decay
+    - Trigger phase transitions for episodes
+    - Compress episodes at phase transitions
+    - Save updated memories
+
+  def compute_new_strength(current, rate, days_elapsed):
+    return current * math.exp(-rate * days_elapsed)
+
+  def transition_episode_phase(episode):
+    age = (today - episode.date).days
+    new_phase = vivid if age < 7, clear if < 30, fuzzy if < 90,
+                fading if < 180, stub otherwise
+    if new_phase != episode.phase:
+      compress episode narrative
+      update episode.phase
+
+
+================================================================================
+STEP 10 — ENGINE: BOOTSTRAP (cogmem/engine/bootstrap.py)
+================================================================================
+Status: [ ] Not started
+
+  def bootstrap_repo(repo_path, months=6):
+
+    Step 1: File tree -> spatial map
+      Walk directory tree, classify into surface/middle/deep
+      Identify landmarks (README, main entry, config)
+      Save to .memory/spatial.md
+
+    Step 2: README -> codebase gist
+      Read README.md if exists
+      Write prompt to .memory/.pending/bootstrap_gist_prompt.md
+      (Subagent generates gist from README)
+      Fallback: create minimal gist from file tree
+
+    Step 3: Source per module -> module gists
+      Identify top-level source directories
+      Write prompts for each module
+      (Subagent generates module gists)
+
+    Step 4: Git log -> synthetic episodes
+      git log --since={months}m --format="%H|%s|%an|%ad|%D" --name-only
+      Group by theme (branch, related files)
+      Create Episode objects (source="git-inferred")
+
+    Step 5: Commit patterns -> emotional tags
+      Reverts, hotfixes -> pain
+      Long-lived files with many fixes -> danger
+      Stable modules -> trust
+
+    Step 6: Code analysis -> entity summaries
+      Parse source files for function/class signatures
+      Create CodeEntity objects (signature only, no LLM needed)
+
+    Step 7: Episode clustering -> initial patterns
+      Group episodes by files/themes
+      Detect recurring bug patterns
+
+    Step 8: Build keyword index
+      Scan all created memory files
+      Build keyword_index.json
+
+    Step 9: Scan @memory: annotations
+      Grep source for @memory: comments
+
+    Step 10: Import global patterns
+      Copy from ~/.cognitive-memory/patterns/ if exists
+
+  def bootstrap_workspace(workspace_path, months=6):
+
+    Step 1: Detect all repos (find .git/ directories)
+    Step 2: Bootstrap each repo independently
+    Step 3: Analyze cross-repo relationships
+      Scan imports, shared deps, docker-compose, CI configs
+      Write prompt for subagent
+    Step 4: Generate workspace memory
+      Create .cogmem/gist/_platform.md
+      Create .cogmem/spatial.md
+      Create .cogmem/meta.json
+    Step 5: Find cross-repo episodes from git
+      Correlate commits across repos by time/branch/ticket
+    Step 6: Detect cross-repo danger zones
+      Shared contracts, API boundaries
+    Step 7: Build workspace keyword index
+
+
+================================================================================
+STEP 11 — CLI (cogmem/cli.py)
+================================================================================
+Status: [ ] Not started
+
+  @click.group()
+  def cli(): ...
+
+  RETRIEVAL:
+    cli recall <query> [--repo-only] [--workspace-only]
+    cli search <query> --type <type>
+    cli dangers [files...]
+    cli intentions
+
+  ENCODING:
+    cli encode --event <text> --emotion <type> --files <paths>
+    cli encode --manual <text>
+    cli encode-git [--since 7d]
+    cli encode-annotations
+    cli hook-encode <tool> <file>
+
+  MAINTENANCE:
+    cli consolidate --scope full|repo|workspace
+    cli decay
+    cli status [--repo] [--workspace]
+
+  CORRECTIONS:
+    cli update --mark-stable <target>
+    cli update --mark-dangerous <target>
+    cli update --update-gist <target> --content <text>
+    cli update --add-pattern <name> --content <text>
+    cli forget <target>
+
+  LIFECYCLE:
+    cli bootstrap [--months 6] [--workspace]
+    cli export <path>
+    cli import <path>
+
+  WORKSPACE:
+    cli workspace init
+    cli workspace add-repo <path>
+    cli workspace status
+
+
+================================================================================
+STEP 12 — CLAUDE CODE PLUGIN
+================================================================================
+Status: [ ] Not started
+
+  .claude/skills/memory/SKILL.md
+    Auto-recall skill. Invoked before coding tasks.
+    Runs: cogmem recall "$ARGUMENTS"
+
+  .claude/skills/consolidate-memory/SKILL.md
+    Consolidation subagent skill.
+    context: fork, agent: Explore
+    Runs: cogmem consolidate --scope full
+
+  .claude/commands/recall.md          /recall [query]
+  .claude/commands/remember.md        /remember [what]
+  .claude/commands/forget.md          /forget [target]
+  .claude/commands/memory-status.md   /memory-status
+  .claude/commands/mark-dangerous.md  /mark-dangerous [path]
+  .claude/commands/mark-stable.md     /mark-stable [path]
+  .claude/commands/workspace-status.md /workspace-status
+  .claude/commands/cross-repo.md      /cross-repo [query]
+
+  .claude/hooks.json
+    PostToolUse hooks for Write(*) and Edit(*)
+    Runs: cogmem hook-encode <tool> "$TOOL_INPUT_FILE"
+
+
+================================================================================
+STEP 13 — TESTS
+================================================================================
+Status: [ ] Not started
+
+  tests/test_models.py
+    - Serialization roundtrip for all model types
+    - Episode phase computation
+    - Compression levels
+
+  tests/test_storage.py
+    - Markdown read/write with frontmatter
+    - JSON read/write
+    - Directory creation
+    - KeywordIndex build/query/update
+
+  tests/test_utils.py
+    - Cue extraction from various queries
+    - Scoring formula
+    - Token estimation
+    - Repo detection
+
+  tests/test_recall.py
+    - Full recall pipeline with fixture data
+    - Budget allocation per task type
+    - Multi-tier search
+
+  tests/test_encode.py
+    - Episode creation from event
+    - Git log parsing
+    - Tier detection (single vs multi repo)
+
+  tests/test_bootstrap.py
+    - Spatial map from file tree
+    - Git log to episodes
+    - Entity extraction
+
+
+================================================================================
+FILE TREE
+================================================================================
+
+  cogmem/
+  ├── pyproject.toml
+  ├── cogmem/
+  │   ├── __init__.py
+  │   ├── __main__.py
+  │   ├── cli.py
+  │   ├── engine/
+  │   │   ├── __init__.py
+  │   │   ├── recall.py
+  │   │   ├── encode.py
+  │   │   ├── consolidate.py
+  │   │   ├── decay.py
+  │   │   └── bootstrap.py
+  │   ├── models/
+  │   │   ├── __init__.py
+  │   │   ├── common.py
+  │   │   ├── episode.py
+  │   │   ├── gist.py
+  │   │   ├── pattern.py
+  │   │   ├── emotion.py
+  │   │   ├── spatial.py
+  │   │   ├── prospective.py
+  │   │   └── entity.py
+  │   ├── tiers/
+  │   │   ├── __init__.py
+  │   │   ├── repo.py
+  │   │   ├── workspace.py
+  │   │   └── global_mem.py
+  │   ├── storage/
+  │   │   ├── __init__.py
+  │   │   ├── filesystem.py
+  │   │   └── index.py
+  │   └── utils/
+  │       ├── __init__.py
+  │       ├── cues.py
+  │       ├── scoring.py
+  │       ├── repo_detect.py
+  │       └── tokens.py
+  ├── tests/
+  │   ├── __init__.py
+  │   ├── test_models.py
+  │   ├── test_storage.py
+  │   ├── test_utils.py
+  │   ├── test_recall.py
+  │   ├── test_encode.py
+  │   └── test_bootstrap.py
+  ├── .claude/
+  │   ├── skills/
+  │   │   ├── memory/SKILL.md
+  │   │   └── consolidate-memory/SKILL.md
+  │   ├── commands/
+  │   │   ├── recall.md
+  │   │   ├── remember.md
+  │   │   ├── forget.md
+  │   │   ├── memory-status.md
+  │   │   ├── mark-dangerous.md
+  │   │   ├── mark-stable.md
+  │   │   ├── workspace-status.md
+  │   │   └── cross-repo.md
+  │   └── hooks.json
+  └── docs/
+      ├── cogmem_spec_v3.2_clean.txt
+      └── build_plan.txt              ← this file
+
+
+================================================================================
+END OF BUILD PLAN
+================================================================================

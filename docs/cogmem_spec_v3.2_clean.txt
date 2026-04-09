@@ -1,0 +1,1562 @@
+================================================================================
+COGNITIVE CODEBASE MEMORY
+A Human Memory System for Claude Code
+================================================================================
+Version:    3.1
+Date:       April 5, 2026
+Author:     Aditya
+Delivery:   Claude Code Plugin (skills + hooks + commands + subagent)
+Engine:     cogmem CLI (Python)
+Scope:      Single-repo AND multi-repo workspaces
+================================================================================
+
+
+TABLE OF CONTENTS
+-----------------
+Part I    — Philosophy & Principles
+  1.  What This Is
+  2.  Six Cognitive Principles
+  3.  Design History
+
+Part II   — The Memory Hierarchy
+  4.  Three Tiers of Memory
+  5.  Repo Memory (Module-Level Knowledge)
+  6.  Workspace Memory (System-Level Knowledge)
+  7.  Global Memory (Universal Knowledge)
+  8.  How Tiers Interact
+
+Part III  — The Cognitive Model
+  9.  Six Memory Systems
+  10. Episodic Memory (What Happened)
+  11. Semantic Memory / Gist (What I Understand)
+  12. Spatial Memory (Where Things Live)
+  13. Pattern Memory (I've Seen This Before)
+  14. Emotional Memory (How I Feel About This Code)
+  15. Prospective Memory (What To Do Next Time)
+  16. Code Entities (Three-Zoom)
+  17. The Memory Web
+
+Part IV   — Cognitive Processes
+  18. Attention (What Gets Noticed)
+  19. Encoding (How Memories Form)
+  20. Retrieval (How Memories Surface)
+  21. Consolidation (How Understanding Grows)
+  22. Forgetting (How Memories Fade)
+  23. Reconsolidation (How Memories Correct)
+  24. Priming (How Context Flows)
+  25. Interference (How New Overwrites Old)
+  26. Metamemory (Knowing What You Know)
+
+Part V    — Claude Code Integration
+  27. The Four Extension Points
+  28. Skill: Auto-Recall
+  29. Hooks: Auto-Encoding
+  30. Slash Commands: Developer Control
+  31. Subagent: Consolidation
+  32. The Plugin Package
+
+Part VI   — The cogmem Engine
+  33. CLI Interface
+  34. Retrieval Algorithm
+  35. Encoding Algorithm
+  36. Consolidation Algorithm
+  37. Forgetting Algorithm
+
+Part VII  — Storage & Operations
+  38. File Layout (Single-Repo)
+  39. File Layout (Multi-Repo Workspace)
+  40. File Formats
+  41. Indexing
+  42. Bootstrap: Single Repo
+  43. Bootstrap: Multi-Repo Workspace
+  44. Configuration
+  45. Implementation Roadmap
+
+
+================================================================================
+PART I — PHILOSOPHY & PRINCIPLES
+================================================================================
+
+
+================================================================================
+1. WHAT THIS IS
+================================================================================
+
+A memory system for Claude Code that models how a senior developer's brain
+holds a codebase — or an entire multi-service platform spanning many repos.
+
+A developer working across five repos doesn't have five separate brains.
+They have ONE mind with knowledge at different scopes: how the auth module
+works (repo-level), how the API feeds the dashboard (workspace-level), and
+that silent exception swallowing is dangerous everywhere (universal).
+
+This system mirrors that with three tiers:
+  REPO memory — intimate knowledge of one codebase
+  WORKSPACE memory — how repos connect, cross-repo experiences
+  GLOBAL memory — universal patterns and developer preferences
+
+Delivered as a Claude Code plugin. No wrapper. No interception.
+Skills auto-invoke recall. Hooks auto-encode. Commands give control.
+
+
+================================================================================
+2. SIX COGNITIVE PRINCIPLES
+================================================================================
+
+  STORIES, NOT STRUCTURES
+  The primary unit is the episode — a narrative with emotion and consequence.
+
+  INTENT, NOT IMPLEMENTATION
+  Long-term memory stores what code DOES and WHY, not syntax.
+
+  ASSOCIATION, NOT SEARCH
+  Retrieval is cue-driven. Multiple cues converge on specific memories.
+
+  EMOTION IS THE PRIORITY SYSTEM
+  Painful code is remembered vividly. Trusted code fades.
+
+  FORGETTING IS EXPERTISE
+  Details fade but judgment persists. Five bugs become one pattern.
+
+  MEMORY BREATHES
+  No fixed partitions. Output adapts to the current task and scope.
+
+
+================================================================================
+3. DESIGN HISTORY
+================================================================================
+
+  CLAUDE.md:       Claude skims it. Static. No proactive warnings.
+  MCP tools:       Claude might not call them. Optional = unreliable.
+  Wrapper:         Not native. Fragile. Complex.
+  Standalone lib:  No delivery mechanism into Claude Code.
+  THIS (plugin):   Skills auto-recall. Hooks auto-encode. Native.
+
+
+================================================================================
+PART II — THE MEMORY HIERARCHY
+================================================================================
+
+
+================================================================================
+4. THREE TIERS OF MEMORY
+================================================================================
+
+  ┌──────────────────────────────────────────────────────────┐
+  │ GLOBAL (~/.cognitive-memory/)                            │
+  │                                                          │
+  │ Universal patterns (apply to ANY codebase)               │
+  │ Developer preferences (coding style, tool preferences)   │
+  │                                                          │
+  │ Transfers automatically to new projects.                 │
+  │ Survives project deletion.                               │
+  └──────────────────────────────────────────────────────────┘
+                          │
+                          │ patterns bubble up
+                          │ preferences apply down
+                          ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │ WORKSPACE (workspace/.cogmem/)                           │
+  │                                                          │
+  │ How repos connect. Cross-repo experiences.               │
+  │ System-level gist. Cross-repo dangers.                   │
+  │ Workspace spatial map (service topology).                │
+  │                                                          │
+  │ Exists ONLY when multiple repos share a workspace.       │
+  │ Single-repo projects skip this tier entirely.            │
+  └──────────────────────────────────────────────────────────┘
+                          │
+                          │ cross-references
+                          │ cross-repo episodes
+                          ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │ REPO (repo/.memory/)                                     │
+  │                                                          │
+  │ Episodes. Gist. Patterns. Emotions. Entities. Spatial.   │
+  │ Prospective. Full cognitive model for ONE codebase.      │
+  │                                                          │
+  │ This is where 90% of memory lives.                       │
+  │ Rich, detailed, intimate.                                │
+  └──────────────────────────────────────────────────────────┘
+
+Single-repo projects use only the REPO tier + GLOBAL.
+Multi-repo workspaces use all three.
+
+The hierarchy mirrors how brains work: you have knowledge about Python
+(global), knowledge about the maritime tracking platform (workspace),
+and knowledge about the auth module (repo). They coexist and
+cross-reference naturally.
+
+
+================================================================================
+5. REPO MEMORY — MODULE-LEVEL KNOWLEDGE
+================================================================================
+
+Location: <repo>/.memory/
+
+Contains the full cognitive model for ONE repository:
+  - Episodes (debugging sessions, code reviews, discoveries)
+  - Gist (module understanding, component understanding)
+  - Spatial map (where things live within this repo)
+  - Patterns (repo-specific recurring issues)
+  - Emotional tags (pain, danger, trust on specific files)
+  - Prospective memories (future intentions for this repo)
+  - Code entities (function signatures + summaries)
+
+This is where 90% of the detail lives. When you're working inside
+vessel-api/, the repo memory gives you intimate knowledge of that
+codebase's modules, bugs, patterns, and history.
+
+Repo memory is self-contained. It works perfectly for single-repo
+projects. It doesn't need the workspace tier to function.
+
+Repo memory can be committed to git (optional). If committed:
+  - Team members share gist, patterns, entities, spatial map
+  - Episodes and emotions stay in .gitignore (personal)
+
+
+================================================================================
+6. WORKSPACE MEMORY — SYSTEM-LEVEL KNOWLEDGE
+================================================================================
+
+Location: <workspace>/.cogmem/
+
+Exists ONLY when cogmem detects multiple repos in a parent directory
+(presence of multiple .git/ directories as children, or explicit
+workspace configuration).
+
+Contains three things that don't belong to any single repo:
+
+  WORKSPACE GIST — what the whole system does:
+    "This is a maritime vessel tracking platform. ais-ingestion
+     receives satellite data and pushes to vessel-api via gRPC.
+     vessel-api processes and serves via REST. vessel-dashboard
+     is the user-facing React app."
+
+  CROSS-REPO EPISODES — experiences spanning multiple repos:
+    "Changed the position response format in vessel-api. Updated
+     the protobuf in shared-proto. But vessel-dashboard was still
+     using the old shape — showed stale positions for 2 hours."
+
+  WORKSPACE SPATIAL MAP — service topology:
+    ais-ingestion → (gRPC) → vessel-api → (REST) → vessel-dashboard
+    shared-proto defines contracts between services.
+    deploy manages infrastructure for all.
+
+  CROSS-REPO EMOTIONS — system-level danger zones:
+    "Changing shared-proto affects both ais-ingestion and vessel-api.
+     Always check both consumers."
+    "API response changes break the dashboard silently — no type
+     checking across the service boundary."
+
+  CROSS-REPO PATTERNS — system-level recurring issues:
+    "Contract drift: when one service updates a shared interface
+     and consumers don't update in sync."
+
+Workspace memory is SPARSE compared to repo memory. Most knowledge is
+repo-specific. Workspace memory captures only what SPANS repos.
+
+
+================================================================================
+7. GLOBAL MEMORY — UNIVERSAL KNOWLEDGE
+================================================================================
+
+Location: ~/.cognitive-memory/
+
+Contains knowledge that transfers across ALL projects:
+
+  UNIVERSAL PATTERNS:
+    "Silent exception swallowing" is dangerous in any codebase.
+    "N+1 queries" are a problem in any ORM-based system.
+    These patterns travel with the developer, not the project.
+
+  DEVELOPER PREFERENCES:
+    Coding style preferences, tool preferences, personal conventions.
+    "I always want tests for public functions."
+    "I prefer explicit error handling over try/catch."
+
+Global memory is the smallest tier. It contains only things that are
+truly universal — not project-specific or even workspace-specific.
+
+Pattern promotion pipeline:
+  1. Pattern discovered in a repo → lives in repo/.memory/patterns/
+  2. Pattern seen in 2+ repos → promoted to workspace/.cogmem/patterns/
+  3. Pattern marked transferable=true → copied to ~/.cognitive-memory/patterns/
+  4. On bootstrap of any new project → global patterns imported
+
+
+================================================================================
+8. HOW TIERS INTERACT
+================================================================================
+
+RECALL searches all applicable tiers and MERGES results:
+
+  Single-repo project:
+    Search: repo/.memory/ → ~/.cognitive-memory/
+    Merge: repo results + global patterns
+
+  Multi-repo workspace:
+    Search: repo/.memory/ → workspace/.cogmem/ → ~/.cognitive-memory/
+    Merge: repo results + workspace cross-repo context + global patterns
+
+  Scoring across tiers:
+    Repo-level memories get a 1.0x base (most specific, most relevant)
+    Workspace-level memories get a 0.9x base (broader context)
+    Global patterns get a 0.8x base (universal but less specific)
+    After base adjustment, normal convergence scoring applies.
+
+ENCODING goes to the most specific appropriate tier:
+
+  Files touched are all in one repo?
+    → Episode goes to repo/.memory/episodes/
+  Files touched span multiple repos?
+    → Episode goes to workspace/.cogmem/episodes/
+    → Also referenced in each repo's keyword index
+  Pattern proven universal (transferable=true)?
+    → Copied to ~/.cognitive-memory/patterns/
+
+CONSOLIDATION runs per-tier:
+
+  Repo consolidation: standard single-repo process (nightly)
+  Workspace consolidation: cross-repo pattern detection (weekly)
+  Global consolidation: pattern promotion review (monthly)
+
+PATTERNS BUBBLE UP over time:
+
+  Week 1:  "Silent exception swallowing" seen in vessel-api
+           → lives in vessel-api/.memory/patterns/
+  Week 3:  Same pattern seen in ais-ingestion
+           → promoted to workspace/.cogmem/patterns/
+  Month 2: Developer starts a new project, same pattern applies
+           → lives in ~/.cognitive-memory/patterns/
+           → imported into new project on bootstrap
+
+
+================================================================================
+PART III — THE COGNITIVE MODEL
+================================================================================
+
+
+================================================================================
+9. SIX MEMORY SYSTEMS
+================================================================================
+
+  EPISODIC    — What happened. Stories with time, emotion, consequence.
+  SEMANTIC    — What I understand. Intent, judgment, relationships.
+  SPATIAL     — Where things live. Topology, landmarks, neighborhoods.
+  PATTERN     — I've seen this before. Intuition, déjà vu, code smell.
+  EMOTIONAL   — How I feel about this code. Pain, danger, trust, pride.
+  PROSPECTIVE — What I need to do next time. Future-triggered intentions.
+
+All six exist at the REPO tier. At the WORKSPACE tier, only episodes,
+gist, spatial, patterns, and emotions exist (no per-file entities or
+per-file prospective at workspace level). At GLOBAL, only patterns
+and preferences exist.
+
+
+================================================================================
+10. EPISODIC MEMORY (What Happened)
+================================================================================
+
+Brain analog: Hippocampus.
+
+Schema:
+  id                   string
+  date                 string         "2026-04-04"
+  when                 string         "last Tuesday" (fuzzy)
+  tier                 string         repo | workspace
+
+  trigger              string         what activates this memory
+  story                string         natural language narrative
+  learned              string         key takeaway
+
+  emotion              string         "frustration → relief"
+  intensity            float          0.0 - 1.0
+
+  code_touched         [string]       files involved (may span repos)
+  repos_involved       [string]       which repos (workspace episodes only)
+  people_involved      [string]       who was there
+  related_episodes     [string]       connected stories (can cross tiers)
+  related_patterns     [string]       patterns this exemplifies
+  triggered_prospective [string]      future intentions created
+
+  source               string         lived | git-inferred | auto-generated
+  source_confidence    float          lived=1.0, git=0.5, auto=0.6
+
+  strength             float          decays over time
+  access_count         int
+  last_accessed        datetime
+  phase                string         vivid | clear | fuzzy | fading | stub
+
+Episode lifecycle:
+  VIVID   (< 7 days)     Full narrative.
+  CLEAR   (7-30 days)    Full narrative. Strength decaying.
+  FUZZY   (30-90 days)   Summary only. Core insight + emotion.
+  FADING  (90-180 days)  Three-line stub.
+  STUB    (> 180 days)   Deleted if consolidated. Kept if not.
+
+Three compression levels:
+  full     ~200 tokens
+  summary  ~50 tokens
+  stub     ~15 tokens
+
+Tier placement:
+  Single-repo episode → repo/.memory/episodes/
+  Cross-repo episode → workspace/.cogmem/episodes/
+  Cross-repo episodes include repos_involved field.
+
+
+================================================================================
+11. SEMANTIC MEMORY / GIST (What I Understand)
+================================================================================
+
+Brain analog: Neocortex.
+
+Schema:
+  id                   string
+  scope                string         platform | codebase | module | component
+  target               string         what this describes
+  tier                 string         workspace | repo
+
+  what_it_does         string
+  why_it_exists        string
+  how_it_works         string         intent-level, NOT code
+  key_relationships    string
+  judgment             string         fragile | solid | improving | unknown
+
+  confidence           float
+  formed_from          [string]       episode IDs
+  contradictions       [string]
+  last_updated         datetime
+  last_verified        datetime
+
+Four levels (expanded from three for workspace):
+
+  LEVEL 0 — Platform identity (workspace only, ~300 tokens):
+    "Maritime vessel tracking platform. 5 services. ais-ingestion receives
+     satellite data → vessel-api processes → vessel-dashboard serves users."
+    Lives in: workspace/.cogmem/gist/_platform.md
+
+  LEVEL 1 — Codebase identity (~200 tokens per repo):
+    "vessel-api: Python/FastAPI backend. Processes AIS data, serves REST API.
+     ~5K LOC across 7 modules."
+    Lives in: repo/.memory/gist/_codebase.md
+
+  LEVEL 2 — Module understanding (~100 tokens each):
+    "src/tracking/ — Core engine. Ship state, predictions, anomalies. Fragile."
+    Lives in: repo/.memory/gist/src_tracking.md
+
+  LEVEL 3 — Component understanding (~50 tokens each):
+    "TrackingEngine.update() — The heartbeat. Must complete in <100ms."
+    Lives in: repo/.memory/gist/src_tracking_engine.md
+
+
+================================================================================
+12. SPATIAL MEMORY (Where Things Live)
+================================================================================
+
+Brain analog: Hippocampal place cells.
+
+TWO LEVELS of spatial awareness:
+
+WORKSPACE SPATIAL (workspace/.cogmem/spatial.md):
+  How services connect. Data flow. Deployment topology.
+
+  Schema:
+    services        [{name, repo, role, feel}]
+    data_flow       [{from, to, protocol, contract}]
+    shared_contracts [{repo, consumers}]
+    deployment      string
+    danger_zones    [{description, repos_involved}]
+
+  Example:
+    services:
+      - vessel-api: "the brain — processes everything" (feel: busy)
+      - vessel-dashboard: "the face — users see this" (feel: stable)
+      - ais-ingestion: "the ears — listens to satellites" (feel: settled)
+      - shared-proto: "the language — defines all contracts" (feel: dangerous)
+      - deploy: "the body — infrastructure" (feel: rarely touched)
+
+    data_flow:
+      ais-ingestion → (gRPC/protobuf) → vessel-api → (REST/JSON) → vessel-dashboard
+
+    danger_zones:
+      - "shared-proto changes affect both ingestion and api. Check both."
+      - "API response changes break dashboard silently."
+
+REPO SPATIAL (repo/.memory/spatial.md):
+  Internal topology. Same as v3.0.
+
+  Schema:
+    surface         [{path, description, feel}]
+    middle          [{path, description, feel}]
+    deep            [{path, description, feel}]
+    landmarks       [{path, description, why}]
+    neighborhoods   [{from, to, relation}]
+
+
+================================================================================
+13. PATTERN MEMORY (I've Seen This Before)
+================================================================================
+
+Brain analog: Basal ganglia.
+
+Schema:
+  id               string
+  name             string
+  category         string         bug | design | anti | smell | cross-repo
+  tier             string         repo | workspace | global
+
+  signature        string         what it looks like
+  consequence      string         what goes wrong
+  response         string         what to do
+
+  seen_in          [string]       locations (may include repo prefixes)
+  frequency        int
+  last_seen        datetime
+
+  trigger_cues     [string]       activation keywords
+  strength         float
+  danger_level     string         low | medium | high | critical
+  transferable     bool           can promote to higher tier?
+
+New category for workspace: CROSS-REPO PATTERNS
+
+  Example: "Contract drift"
+    Signature: One service updates a shared interface (protobuf, API schema)
+    but consumers don't update in sync.
+    Consequence: Silent failures, stale data, runtime errors.
+    Response: Update all consumers in the same PR or deployment.
+    Seen in: shared-proto → vessel-api lag, vessel-api → vessel-dashboard lag.
+
+Tier placement:
+  Repo-specific pattern → repo/.memory/patterns/
+  Seen in 2+ repos → promoted to workspace/.cogmem/patterns/
+  Marked transferable → copied to ~/.cognitive-memory/patterns/
+
+
+================================================================================
+14. EMOTIONAL MEMORY (How I Feel About This Code)
+================================================================================
+
+Brain analog: Amygdala.
+
+Schema: same as v3.0. Unchanged.
+
+  target, emotion, intensity, reason, source_episodes, last_reinforced
+  retrieval_bias (boost | demote | warn)
+  zoom_override (full | summary | null)
+
+Tier placement:
+  Emotion about a specific file → repo/.memory/emotions.md
+  Emotion about a cross-repo concern → workspace/.cogmem/emotions.md
+
+  Example repo emotion:
+    PAIN: src/auth/refresh.py — silent 403 catch (intensity: 0.85)
+
+  Example workspace emotion:
+    DANGER: shared-proto changes — affect multiple services (intensity: 0.7)
+    DANGER: API → dashboard boundary — no type safety (intensity: 0.6)
+
+
+================================================================================
+15. PROSPECTIVE MEMORY (What To Do Next Time)
+================================================================================
+
+Brain analog: Prospective memory / intention memory.
+
+Schema: same as v3.0. Unchanged.
+
+  id, intention, trigger, trigger_type, created_from, priority, completed
+
+Tier placement:
+  Intention about a repo file → repo/.memory/prospective/
+  Intention about cross-repo work → workspace/.cogmem/prospective/
+
+  Example repo prospective:
+    "Add concurrency test for tracking engine"
+    trigger: "touching src/tracking/"
+
+  Example workspace prospective:
+    "Set up contract testing between vessel-api and vessel-dashboard"
+    trigger: "touching shared-proto or API response format"
+
+
+================================================================================
+16. CODE ENTITIES (Three-Zoom)
+================================================================================
+
+Same as v3.0. REPO-LEVEL ONLY.
+Entities are too granular for workspace or global tiers.
+
+  SIGNATURE (~10 tokens)
+  SUMMARY (~50 tokens)
+  FULL: not stored — Claude reads actual source
+
+
+================================================================================
+17. THE MEMORY WEB
+================================================================================
+
+Within a tier:
+  EPISODES → (consolidation) → GIST
+  EPISODES → (pattern extraction) → PATTERNS
+  EPISODES → (emotional encoding) → EMOTIONS
+  EPISODES → (intention creation) → PROSPECTIVE
+  EMOTIONS → (color) → ALL RETRIEVAL
+
+Across tiers:
+  CROSS-REPO EPISODE → references REPO EPISODES in each involved repo
+  WORKSPACE PATTERN → references REPO PATTERNS it was promoted from
+  WORKSPACE GIST → references REPO GISTS it summarizes
+  GLOBAL PATTERN → imported into new REPO PATTERNS on bootstrap
+  REPO EMOTION → may trigger WORKSPACE EMOTION if pattern crosses repos
+
+
+================================================================================
+PART IV — COGNITIVE PROCESSES
+================================================================================
+
+
+================================================================================
+18. ATTENTION (What Gets Noticed)
+================================================================================
+
+Same as v3.0, with one addition for multi-repo:
+
+  CROSS-REPO ATTENTION (always HIGH):
+    - Changes to shared contracts (protobuf, API schemas, shared libraries)
+    - Changes that affect service boundaries
+    - Deployments that touch multiple services
+    - Incidents that cascade across services
+
+When a shared-proto file is edited, attention is HIGH regardless of
+the change size, because the blast radius crosses repo boundaries.
+
+
+================================================================================
+19. ENCODING (How Memories Form)
+================================================================================
+
+Same encoding strength factors as v3.0.
+
+Tier placement logic for new episodes:
+
+  def determine_tier(files_touched, session_context):
+
+      repos = set()
+      for file in files_touched:
+          repo = detect_repo(file)
+          repos.add(repo)
+
+      if len(repos) == 1:
+          # All changes in one repo → repo-level episode
+          return ("repo", repos.pop())
+
+      elif len(repos) > 1:
+          # Changes span repos → workspace-level episode
+          # Also create lightweight references in each repo's index
+          return ("workspace", repos)
+
+  def detect_repo(file_path):
+      """Walk up from file to find .git/ directory."""
+      ...
+
+Cross-repo encoding side effects:
+  When a workspace episode is created:
+    1. Episode stored in workspace/.cogmem/episodes/
+    2. Each involved repo's keyword_index.json gets a reference
+       to the workspace episode (prefixed with "workspace:")
+    3. Workspace spatial map checked for new data flow connections
+    4. Workspace emotions checked for cross-repo danger patterns
+
+
+================================================================================
+20. RETRIEVAL (How Memories Surface)
+================================================================================
+
+Seven-stage pipeline (expanded for multi-tier):
+
+STAGE 1 — CUE EXTRACTION (<10ms)
+
+  Same as v3.0. Regex + dictionary matching.
+  Additional: detect repo references in query.
+    "fix the dashboard stale data" → repos: [vessel-dashboard]
+    "the API response format changed" → repos: [vessel-api], cross-repo flag
+
+STAGE 2 — DETERMINE SEARCH SCOPE
+
+  def determine_scope(cues, cwd):
+      current_repo = detect_repo(cwd)
+      workspace = detect_workspace(cwd)
+
+      scopes = [current_repo]    # always search current repo
+
+      if workspace:
+          scopes.append(workspace)  # add workspace tier
+
+          # If cues reference OTHER repos, search those too
+          for cue in cues.entities:
+              for repo in workspace.repos:
+                  if cue in repo.name or cue in repo.modules:
+                      scopes.append(repo)
+
+      scopes.append("global")     # always search global patterns
+
+      return scopes
+
+STAGE 3 — MULTI-TIER SEARCH (<100ms)
+
+  For each scope in search order:
+    Search episodes, gist, patterns, emotions, entities, prospective
+    Apply tier-based base score adjustment:
+      Current repo:     1.0x (most specific)
+      Other repos:      0.7x (less immediately relevant)
+      Workspace:        0.9x (system context)
+      Global:           0.8x (universal but less specific)
+
+STAGE 4 — CONVERGENCE SCORING
+
+  Same formula as v3.0:
+    score = keyword_match
+            × convergence_multiplier
+            × emotional_weight
+            × recency_weight
+            × context_congruence
+            × priming_bonus
+            × tier_adjustment
+
+  New: tier_adjustment applies the base scores from Stage 3.
+
+STAGE 5 — TASK TYPE DETECTION
+
+  Same as v3.0, with one addition:
+    CROSS-REPO: "deploy", "release", "contract", "proto", "schema change",
+                "integration", "all services"
+    Budget for CROSS-REPO task type emphasizes workspace gist + cross-repo
+    episodes + workspace emotions.
+
+STAGE 6 — BUDGET ALLOCATION
+
+  Token budget per task type (% of total ~3500 tokens):
+
+              episodes  gist  patterns  dangers  entities  spatial  prospective
+  BUGFIX:       30%     10%    15%       15%      20%       5%        5%
+  FEATURE:      10%     25%    15%       10%      15%      15%       10%
+  REFACTOR:     10%     10%    15%       10%      40%      10%        5%
+  UNDERSTAND:   20%     30%     5%        5%      15%      20%        5%
+  PLAN:         15%     35%    15%        5%       5%      15%       10%
+  EXPLORE:      10%     30%     5%        5%       5%      35%       10%
+  CROSS-REPO:   25%     20%    15%       15%       5%      15%        5%
+
+  For multi-repo tasks, the gist budget includes workspace gist (Level 0)
+  alongside repo gist. The spatial budget includes workspace spatial
+  (service topology). The episode budget includes cross-repo episodes.
+
+STAGE 7 — ASSEMBLY + METAMEMORY
+
+  Same as v3.0. Zoom selection, tip-of-tongue, confidence, cold spots.
+
+  Additional metamemory for workspace:
+    "Cross-repo context: this issue involves vessel-api and vessel-dashboard.
+     I have strong memory of vessel-api but limited memory of vessel-dashboard."
+
+
+================================================================================
+21. CONSOLIDATION (How Understanding Grows)
+================================================================================
+
+Consolidation runs at EACH TIER independently.
+
+REPO-LEVEL CONSOLIDATION (same as v3.0):
+
+  Phase 1 — Nightly replay
+  Phase 2 — Weekly pattern extraction
+  Phase 3 — Bi-weekly gist formation
+  Phase 4 — Monthly emotional recalibration
+  Phase 5 — Monthly pruning
+
+WORKSPACE-LEVEL CONSOLIDATION (new):
+
+  Phase W1 — Weekly cross-repo pattern detection:
+    Input: All repo-level episodes from the past week that touch
+           shared concerns (APIs, contracts, deployments).
+    Process:
+      1. Identify episodes from different repos with shared themes
+      2. Check if any repo-level pattern appears in 2+ repos → promote
+      3. Look for cross-repo failure modes (contract drift, cascade failures)
+    LLM: ONE Haiku call per week.
+
+  Phase W2 — Bi-weekly workspace gist update:
+    Input: All repo gists + recent workspace episodes.
+    Process:
+      1. Update workspace gist if repo-level understanding changed
+      2. Update service topology if new repos or connections detected
+      3. Check workspace spatial map against actual directory structure
+    LLM: ONE Haiku call.
+
+  Phase W3 — Monthly cross-repo emotional recalibration:
+    Input: Workspace emotions + recent cross-repo episodes.
+    Process:
+      1. Adjust intensity of cross-repo danger tags
+      2. Detect new cross-repo danger patterns
+    LLM: ONE Haiku call.
+
+GLOBAL-LEVEL CONSOLIDATION (new):
+
+  Monthly pattern review:
+    Check repo patterns marked transferable=true.
+    If not already in global → copy to ~/.cognitive-memory/patterns/.
+    File operations only — no LLM needed.
+
+
+================================================================================
+22. FORGETTING (How Memories Fade)
+================================================================================
+
+Same decay model as v3.0. Applied per-tier.
+
+  Memory Type      │ Decay Rate │ Half-life
+  ─────────────────┼────────────┼────────────
+  Episodes         │ 0.05       │ ~14 days
+  Gist             │ 0.005      │ ~140 days
+  Patterns         │ 0.01       │ ~70 days
+  Emotions         │ 0.002      │ ~350 days
+  Emotions (PAIN)  │ 0.001      │ ~700 days
+  Spatial          │ 0.003      │ ~230 days
+  Prospective      │ 0.02       │ ~35 days
+
+Workspace memories decay SLOWER than repo memories (0.7x rate multiplier)
+because cross-repo knowledge is harder to rebuild and more valuable
+when it exists.
+
+Global patterns do NOT decay. They persist until explicitly removed.
+
+
+================================================================================
+23-26. RECONSOLIDATION, PRIMING, INTERFERENCE, METAMEMORY
+================================================================================
+
+Same as v3.0, with these multi-repo additions:
+
+RECONSOLIDATION:
+  Workspace gist reconsolidates when a repo's architecture changes
+  significantly (detected by major gist reconsolidation at repo level).
+
+PRIMING:
+  Working in vessel-api primes vessel-api memories (1.3x).
+  If workspace context is active, also primes workspace memories
+  about vessel-api's connections (1.1x for adjacent repos).
+
+INTERFERENCE:
+  When a service is rewritten or replaced, workspace gist reconsolidates.
+  Old service memories get 2x faster decay.
+
+METAMEMORY:
+  Workspace status includes per-repo memory health:
+    "vessel-api: mature memory, high confidence
+     vessel-dashboard: developing, medium confidence
+     ais-ingestion: sparse, low confidence (rarely worked on)
+     shared-proto: minimal episodes but high-impact emotions
+     deploy: cold spot (no memory)"
+
+
+================================================================================
+PART V — CLAUDE CODE INTEGRATION
+================================================================================
+
+
+================================================================================
+27. THE FOUR EXTENSION POINTS
+================================================================================
+
+  Extension Point  │ Function     │ Trigger         │ Reliability
+  ─────────────────┼──────────────┼─────────────────┼───────────
+  SKILL            │ Recall       │ Auto-invoked    │ HIGH
+  HOOKS            │ Encode       │ Automatic       │ HIGHEST
+  SLASH COMMANDS   │ Dev control  │ Developer types │ GUARANTEED
+  SUBAGENT         │ Consolidation│ On-demand/cron  │ HIGH
+
+
+================================================================================
+28. SKILL: AUTO-RECALL
+================================================================================
+
+  File: .claude/skills/memory/SKILL.md
+
+  ---
+  name: memory
+  description: Recall codebase memory before coding tasks. Use when
+    fixing bugs, adding features, refactoring, understanding code,
+    or planning changes. Provides past experiences, warnings, and
+    understanding from previous sessions. Works across repos.
+  ---
+
+  Before starting the task, recall relevant memory:
+
+  ```bash
+  cogmem recall "$ARGUMENTS"
+  ```
+
+  cogmem automatically detects if you're in a multi-repo workspace
+  and searches repo, workspace, and global memory.
+
+  Read the output. It contains:
+  - Understanding of the area
+  - Past experiences (including cross-repo incidents)
+  - Danger warnings
+  - Patterns to watch for
+  - Reminders (prospective memories)
+  - Cross-repo context (if relevant)
+
+  If the output mentions a danger warning, take it seriously.
+  If the output mentions a cross-repo concern, check the other repo.
+
+
+================================================================================
+29. HOOKS: AUTO-ENCODING
+================================================================================
+
+  File: .claude/hooks.json
+
+  {
+    "hooks": {
+      "PostToolUse": [
+        {
+          "matcher": "Write(*)",
+          "hooks": [{
+            "type": "command",
+            "command": "cogmem hook-encode write \"$TOOL_INPUT_FILE\""
+          }]
+        },
+        {
+          "matcher": "Edit(*)",
+          "hooks": [{
+            "type": "command",
+            "command": "cogmem hook-encode edit \"$TOOL_INPUT_FILE\""
+          }]
+        }
+      ]
+    }
+  }
+
+  cogmem hook-encode automatically:
+    1. Detects which repo the file belongs to
+    2. Checks emotional tags
+    3. Determines significance
+    4. Queues event for episode creation
+    5. If files from multiple repos edited in session → flags for
+       cross-repo episode at session end
+
+
+================================================================================
+30. SLASH COMMANDS: DEVELOPER CONTROL
+================================================================================
+
+  /recall [query]         — Query memory (all tiers)
+  /remember [what]        — Store a memory (interactive: asks for details)
+  /forget [target]        — Archive or remove a memory
+  /memory-status          — Health check (per-repo + workspace + global)
+  /mark-dangerous [path]  — Flag a file or service as dangerous
+  /mark-stable [path]     — Remove danger flag
+  /workspace-status       — Show cross-repo health specifically
+  /cross-repo [query]     — Force workspace-level recall only
+
+
+================================================================================
+31. SUBAGENT: CONSOLIDATION
+================================================================================
+
+  File: .claude/skills/consolidate-memory/SKILL.md
+
+  ---
+  name: consolidate-memory
+  description: Consolidate and strengthen codebase memories.
+  context: fork
+  agent: Explore
+  ---
+
+  Run memory consolidation:
+
+  ```bash
+  cogmem consolidate --scope full
+  ```
+
+  For multi-repo workspaces, also consolidate workspace memory:
+
+  ```bash
+  cogmem consolidate --scope workspace
+  ```
+
+
+================================================================================
+32. THE PLUGIN PACKAGE
+================================================================================
+
+  cogmem-plugin/
+  ├── plugin.json
+  ├── .claude/
+  │   ├── skills/
+  │   │   ├── memory/SKILL.md
+  │   │   └── consolidate-memory/SKILL.md
+  │   ├── commands/
+  │   │   ├── recall.md
+  │   │   ├── remember.md
+  │   │   ├── forget.md
+  │   │   ├── memory-status.md
+  │   │   ├── mark-dangerous.md
+  │   │   ├── mark-stable.md
+  │   │   ├── workspace-status.md
+  │   │   └── cross-repo.md
+  │   └── hooks.json
+  └── cogmem/
+      ├── __init__.py
+      ├── __main__.py
+      ├── engine/
+      │   ├── recall.py
+      │   ├── encode.py
+      │   ├── consolidate.py
+      │   ├── decay.py
+      │   └── bootstrap.py
+      ├── models/
+      │   ├── episode.py
+      │   ├── gist.py
+      │   ├── pattern.py
+      │   ├── emotion.py
+      │   ├── spatial.py
+      │   ├── prospective.py
+      │   └── entity.py
+      ├── tiers/
+      │   ├── repo.py           # repo-level operations
+      │   ├── workspace.py      # workspace-level operations
+      │   └── global_mem.py     # global-level operations
+      ├── storage/
+      │   ├── filesystem.py
+      │   └── index.py
+      └── utils/
+          ├── cues.py
+          ├── scoring.py
+          ├── repo_detect.py    # detect repo boundaries
+          └── tokens.py
+
+
+================================================================================
+PART VI — THE cogmem ENGINE
+================================================================================
+
+
+================================================================================
+33. CLI INTERFACE
+================================================================================
+
+  # Retrieval (auto-detects workspace)
+  cogmem recall <query>
+  cogmem recall <query> --repo-only          # skip workspace/global
+  cogmem recall <query> --workspace-only     # workspace tier only
+  cogmem search <query> --type <type>
+  cogmem dangers [files...]
+  cogmem intentions
+
+  # Encoding
+  cogmem encode --event <text> --emotion <type> --files <paths>
+  cogmem encode --manual <text>
+  cogmem encode-git [--since 7d]
+  cogmem encode-annotations
+  cogmem hook-encode <tool> <file>
+
+  # Maintenance
+  cogmem consolidate --scope full            # repo + workspace + global
+  cogmem consolidate --scope repo            # current repo only
+  cogmem consolidate --scope workspace       # workspace only
+  cogmem decay
+  cogmem status                              # all tiers
+  cogmem status --repo                       # repo only
+  cogmem status --workspace                  # workspace only
+
+  # Corrections
+  cogmem update --mark-stable <target>
+  cogmem update --mark-dangerous <target>
+  cogmem update --update-gist <target> --content <text>
+  cogmem update --add-pattern <name> --content <text>
+  cogmem forget <target>
+
+  # Lifecycle
+  cogmem bootstrap [--months 6]              # bootstrap current repo
+  cogmem bootstrap --workspace [--months 6]  # bootstrap entire workspace
+  cogmem export <path>
+  cogmem import <path>
+
+  # Workspace management
+  cogmem workspace init                      # create .cogmem/ in cwd
+  cogmem workspace add-repo <path>           # register a repo
+  cogmem workspace status                    # cross-repo health
+
+
+================================================================================
+34. RETRIEVAL ALGORITHM
+================================================================================
+
+  def recall(query, task_type=None, files=None, budget=3500):
+
+      cues = extract_cues(query)
+
+      # Determine scope
+      current_repo = detect_repo(cwd)
+      workspace = detect_workspace(cwd)
+
+      # Search all applicable tiers
+      matches = []
+
+      # Tier 1: Current repo
+      matches += search_tier(current_repo.memory_dir, cues, tier_weight=1.0)
+
+      # Tier 2: Workspace (if exists)
+      if workspace:
+          matches += search_tier(workspace.cogmem_dir, cues, tier_weight=0.9)
+
+          # Search other repos if cues reference them
+          for repo in workspace.repos:
+              if repo != current_repo and cues_reference(cues, repo):
+                  matches += search_tier(repo.memory_dir, cues, tier_weight=0.7)
+
+      # Tier 3: Global patterns
+      matches += search_global_patterns(cues, tier_weight=0.8)
+
+      # Score, budget, assemble (same as v3.0)
+      for m in matches:
+          m.score = compute_score(m, cues)
+
+      task_type = task_type or detect_task_type(query)
+      allocation = BUDGET_TABLE[task_type]
+      selected = select_within_budget(matches, allocation, budget)
+
+      return format_output(selected, cues, task_type)
+
+
+================================================================================
+35. ENCODING ALGORITHM
+================================================================================
+
+  def encode(event, emotion, intensity, code_touched, learned, **kwargs):
+
+      # Determine which repos are involved
+      repos = set()
+      for file in code_touched:
+          repos.add(detect_repo(file))
+
+      if len(repos) == 1:
+          # Single-repo episode
+          repo = repos.pop()
+          tier = "repo"
+          save_dir = f"{repo.path}/.memory/episodes/"
+      else:
+          # Cross-repo episode
+          workspace = detect_workspace(cwd)
+          tier = "workspace"
+          save_dir = f"{workspace.path}/.cogmem/episodes/"
+
+      # Create episode
+      episode = Episode(
+          tier=tier,
+          repos_involved=list(repos) if tier == "workspace" else None,
+          date=today(), trigger=extract_trigger(event),
+          story=event, learned=learned,
+          emotion=emotion, intensity=intensity,
+          code_touched=code_touched, source="lived",
+          strength=1.0, phase="vivid"
+      )
+      episode.save(save_dir)
+
+      # Update emotions at appropriate tier
+      if tier == "workspace":
+          update_workspace_emotions(code_touched, emotion, intensity)
+      update_repo_emotions(code_touched, emotion, intensity)
+
+      # Cross-reference, pattern match, prospective (same as v3.0)
+      cross_reference(episode)
+      match_patterns(episode)
+      check_completed_intentions(code_touched)
+
+      # Update keyword indices (all involved repos + workspace)
+      update_indices(episode)
+
+
+================================================================================
+36. CONSOLIDATION ALGORITHM
+================================================================================
+
+  def consolidate(scope="full"):
+
+      if scope in ("full", "repo"):
+          # Standard repo consolidation (v3.0 phases 1-5)
+          repo = detect_repo(cwd)
+          consolidate_repo(repo)
+
+      if scope in ("full", "workspace"):
+          workspace = detect_workspace(cwd)
+          if workspace:
+              # Phase W1: Cross-repo pattern detection
+              all_recent_episodes = []
+              for repo in workspace.repos:
+                  all_recent_episodes += get_recent_episodes(repo, days=7)
+
+              prompt = f"""These episodes come from different repos in the
+              same platform:
+              {render_episodes(all_recent_episodes)}
+
+              Current cross-repo patterns:
+              {render_patterns(workspace.patterns)}
+
+              Do any episodes from different repos share themes?
+              Are there cross-repo failure patterns?
+              Should any repo pattern be promoted to workspace level?"""
+
+              result = call_haiku(prompt)
+              apply_workspace_consolidation(result)
+
+              # Phase W2: Workspace gist update
+              update_workspace_gist_if_needed(workspace)
+
+              # Phase W3: Cross-repo emotional recalibration
+              recalibrate_workspace_emotions(workspace)
+
+      if scope in ("full", "global"):
+          # Promote transferable patterns to global
+          promote_patterns_to_global()
+
+
+================================================================================
+37. FORGETTING ALGORITHM
+================================================================================
+
+  Same as v3.0, applied per-tier.
+
+  Workspace memories decay at 0.7x the normal rate.
+  Global patterns do not decay.
+
+
+================================================================================
+PART VII — STORAGE & OPERATIONS
+================================================================================
+
+
+================================================================================
+38. FILE LAYOUT — SINGLE REPO
+================================================================================
+
+  project/
+  └── .memory/
+      ├── episodes/
+      │   └── YYYY-MM-DD_description.md
+      ├── gist/
+      │   ├── _codebase.md
+      │   └── src_module.md
+      ├── patterns/
+      │   └── pattern-name.md
+      ├── entities/
+      │   └── module_function.md
+      ├── prospective/
+      │   └── intention-name.md
+      ├── sessions/
+      │   └── YYYY-MM-DD_HH-MM.md
+      ├── emotions.md
+      ├── spatial.md
+      ├── meta.json
+      └── keyword_index.json
+
+
+================================================================================
+39. FILE LAYOUT — MULTI-REPO WORKSPACE
+================================================================================
+
+  workspace/
+  ├── .cogmem/                              ← WORKSPACE MEMORY
+  │   ├── gist/
+  │   │   └── _platform.md                 ← Level 0: whole platform
+  │   ├── episodes/
+  │   │   └── YYYY-MM-DD_cross-repo-desc.md
+  │   ├── patterns/
+  │   │   └── contract-drift.md
+  │   ├── prospective/
+  │   │   └── cross-repo-intention.md
+  │   ├── emotions.md                      ← cross-repo emotions
+  │   ├── spatial.md                       ← service topology
+  │   └── meta.json                        ← workspace config
+  │
+  ├── vessel-api/
+  │   └── .memory/                         ← REPO MEMORY (standard)
+  │       └── ...
+  ├── vessel-dashboard/
+  │   └── .memory/
+  │       └── ...
+  ├── ais-ingestion/
+  │   └── .memory/
+  │       └── ...
+  ├── shared-proto/
+  │   └── .memory/
+  │       └── ...
+  └── deploy/
+      └── .memory/
+          └── ...
+
+  ~/.cognitive-memory/                     ← GLOBAL MEMORY
+  ├── patterns/
+  │   └── universal-pattern.md
+  └── preferences.json
+
+
+================================================================================
+40. FILE FORMATS
+================================================================================
+
+Same as v3.0 for all repo-level formats.
+
+New workspace formats:
+
+PLATFORM GIST (workspace/.cogmem/gist/_platform.md):
+
+  # Maritime Vessel Tracking Platform
+
+  ## What it is
+  Real-time vessel tracking. 5 services.
+
+  ## Services
+  - vessel-api: Python/FastAPI backend. The brain.
+  - vessel-dashboard: React frontend. The face.
+  - ais-ingestion: Go data pipeline. The ears.
+  - shared-proto: Protobuf definitions. The language.
+  - deploy: Terraform + K8s. The body.
+
+  ## Data flow
+  ais-ingestion → (gRPC) → vessel-api → (REST) → vessel-dashboard
+
+  ## Ownership
+  Aditya: vessel-api, ais-ingestion
+  Raj: vessel-dashboard
+  Priya: deploy, shared-proto
+
+  Confidence: medium
+  Last updated: 2026-04-05
+
+CROSS-REPO EPISODE:
+
+  # Dashboard showing stale positions after API migration
+
+  **When:** March 15, 2026
+  **Emotion:** frustration
+  **Intensity:** 0.7
+  **Repos involved:** vessel-api, vessel-dashboard, shared-proto
+
+  ## What happened
+  Changed position response format in vessel-api. Updated protobuf.
+  But dashboard was using old shape — stale positions for 2 hours.
+
+  ## What I learned
+  Update all consumers in same PR when changing shared contracts.
+
+  ## Code touched
+  - vessel-api/src/api/serializers.py
+  - shared-proto/vessel/position.proto
+  - vessel-dashboard/src/hooks/useVesselPosition.ts
+
+WORKSPACE SPATIAL:
+
+  # Workspace Topology
+
+  ## Services
+  - vessel-api: "the brain" (feel: busy, most active)
+  - vessel-dashboard: "the face" (feel: stable)
+  - ais-ingestion: "the ears" (feel: settled)
+  - shared-proto: "the language" (feel: high-impact)
+  - deploy: "the body" (feel: rarely touched)
+
+  ## Data Flow
+  ais-ingestion → (gRPC/protobuf) → vessel-api → (REST/JSON) → vessel-dashboard
+
+  ## Danger Zones
+  - shared-proto changes affect both ingestion and api. Check both.
+  - API response changes break dashboard silently (no type safety).
+  - deploy changes affect all services simultaneously.
+
+  ## Neighborhoods
+  - shared-proto ↔ vessel-api ↔ ais-ingestion (contract triangle)
+  - vessel-api ↔ vessel-dashboard (API consumer)
+  - deploy ↔ all (infrastructure)
+
+
+================================================================================
+41. INDEXING
+================================================================================
+
+  REPO-LEVEL INDEX: repo/.memory/keyword_index.json
+    Maps keywords to repo-level memory files.
+    Also includes references to workspace episodes (prefixed "workspace:"):
+      "auth": ["episodes/2026-04-05_auth-fix.md",
+               "workspace:episodes/2026-03-15_api-migration.md"]
+
+  WORKSPACE-LEVEL INDEX: workspace/.cogmem/keyword_index.json
+    Maps keywords to workspace-level memory files.
+
+  Both are pre-built inverted indices. Updated on encode and consolidate.
+
+
+================================================================================
+42. BOOTSTRAP: SINGLE REPO
+================================================================================
+
+  cogmem bootstrap --months 6
+
+  Same as v3.0:
+    Step 1: File tree → spatial map
+    Step 2: README → codebase gist (1 Haiku call)
+    Step 3: Source per module → module gists (1 Haiku call each)
+    Step 4: Git log → synthetic episodes (batched Haiku calls)
+    Step 5: Commit patterns → emotional tags
+    Step 6: Code analysis → entity summaries (tree-sitter)
+    Step 7: Episode clustering → initial patterns
+    Step 8: Build keyword index
+    Step 9: Scan @memory: annotations
+    Step 10: Import global patterns from ~/.cognitive-memory/
+
+
+================================================================================
+43. BOOTSTRAP: MULTI-REPO WORKSPACE
+================================================================================
+
+  cogmem bootstrap --workspace --months 6
+
+  Step 1: Detect all repos in workspace
+    Scan for directories containing .git/.
+    Present list for confirmation.
+
+  Step 2: Bootstrap each repo independently
+    Run single-repo bootstrap for each.
+    Creates: <repo>/.memory/ for each repo.
+
+  Step 3: Analyze cross-repo relationships
+    Scan for:
+      - Import statements across repos (protobuf imports, API clients)
+      - Shared dependencies in requirements.txt / package.json / go.mod
+      - Docker-compose or K8s configs showing service connections
+      - CI/CD configs showing deployment dependencies
+    ONE Haiku call: "Here are N services. How do they connect?"
+
+  Step 4: Generate workspace memory
+    Create: workspace/.cogmem/gist/_platform.md
+    Create: workspace/.cogmem/spatial.md
+    Create: workspace/.cogmem/meta.json
+
+  Step 5: Find cross-repo episodes from git
+    Scan for commits close in time across repos (same feature branch name
+    or same JIRA ticket reference in commit messages).
+    Generate cross-repo episodes for correlated commits.
+
+  Step 6: Detect cross-repo danger zones
+    shared-proto or shared libraries → DANGER (affects multiple consumers)
+    API response formats → DANGER (breaks consumers silently)
+    Deploy configs → DANGER (affects all services)
+    Create: workspace/.cogmem/emotions.md
+
+  Step 7: Build workspace keyword index
+    Create: workspace/.cogmem/keyword_index.json
+
+
+================================================================================
+44. CONFIGURATION
+================================================================================
+
+REPO CONFIG (repo/.memory/meta.json):
+  Same as v3.0. Unchanged.
+
+WORKSPACE CONFIG (workspace/.cogmem/meta.json):
+  {
+    "version": "3.1",
+    "workspace": true,
+    "repos": [
+      {"name": "vessel-api", "path": "vessel-api/", "role": "backend"},
+      {"name": "vessel-dashboard", "path": "vessel-dashboard/", "role": "frontend"},
+      {"name": "ais-ingestion", "path": "ais-ingestion/", "role": "pipeline"},
+      {"name": "shared-proto", "path": "shared-proto/", "role": "contract"},
+      {"name": "deploy", "path": "deploy/", "role": "infrastructure"}
+    ],
+    "cross_repo_rules": {
+      "contract_repos": ["shared-proto"],
+      "high_impact_repos": ["shared-proto", "deploy"],
+      "data_flow": "ais-ingestion → vessel-api → vessel-dashboard"
+    },
+    "consolidation": {
+      "weekly_cross_repo": true,
+      "biweekly_workspace_gist": true,
+      "monthly_workspace_emotions": true
+    },
+    "decay": {
+      "workspace_rate_multiplier": 0.7
+    }
+  }
+
+GLOBAL CONFIG (~/.cognitive-memory/preferences.json):
+  {
+    "transfer_patterns": true,
+    "auto_import_on_bootstrap": true
+  }
+
+
+================================================================================
+45. IMPLEMENTATION ROADMAP
+================================================================================
+
+  PHASE 1 — Core Data Model + Single Repo (Week 1-2)
+    All memory type classes
+    File read/write for .memory/
+    cogmem status
+    Single-repo bootstrap
+    Unit tests
+
+  PHASE 2 — Encoding (Week 3)
+    cogmem encode + encode-git + hook-encode
+    Emotional tagging
+    Pattern matching
+    Prospective memory creation
+    Keyword index builder
+
+  PHASE 3 — Retrieval (Week 4)
+    Cue extraction
+    Convergence scoring
+    Task type detection
+    Budget allocation
+    Single-repo recall end-to-end
+
+  PHASE 4 — Consolidation + Decay (Week 5)
+    All 5 repo consolidation phases
+    Decay engine
+    Reconsolidation
+    Consistency checker
+
+  PHASE 5 — Multi-Repo Workspace (Week 6)
+    Workspace detection and initialization
+    Cross-repo episode storage
+    Multi-tier retrieval (repo + workspace + global)
+    Workspace bootstrap
+    Workspace consolidation (phases W1-W3)
+    Cross-repo pattern promotion
+    Workspace slash commands
+
+  PHASE 6 — Claude Code Plugin (Week 7)
+    Skills: memory auto-recall, consolidate-memory
+    Hooks: PostToolUse encoding
+    All slash commands
+    Plugin packaging
+    End-to-end testing
+    Documentation
+
+  PHASE 7 — Global Memory + Polish (Week 8)
+    Global pattern store
+    Pattern promotion pipeline
+    Import/export
+    Performance optimization
+    Edge case handling
+
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

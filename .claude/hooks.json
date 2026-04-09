@@ -1,0 +1,20 @@
+{
+  "hooks": [
+    {
+      "event": "PostToolUse",
+      "matcher": {
+        "tool_name": "Write"
+      },
+      "command": "cogmem hook-encode Write \"$TOOL_INPUT_FILE\"",
+      "timeout": 5000
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": {
+        "tool_name": "Edit"
+      },
+      "command": "cogmem hook-encode Edit \"$TOOL_INPUT_FILE\"",
+      "timeout": 5000
+    }
+  ]
+}
