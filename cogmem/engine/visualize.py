@@ -650,6 +650,7 @@ svg {{
     <div id="mode-toggle" style="margin-top:10px;display:flex;gap:4px;">
         <a class="mode-btn active" href="#">2D</a>
         <a class="mode-btn" href="brain-3d.html">3D</a>
+        <a class="mode-btn" href="#" id="reset-btn">Reset</a>
     </div>
 </div>
 
@@ -934,6 +935,19 @@ function dragEnded(event, d) {{
     if (!event.active) simulation.alphaTarget(0);
     // Keep node pinned where you dropped it
 }}
+
+// ---------------------------------------------------------------------------
+// Reset button — unpin all nodes, clear selection, restart simulation
+// ---------------------------------------------------------------------------
+document.getElementById('reset-btn').addEventListener('click', (e) => {{
+    e.preventDefault();
+    nodes.forEach(n => {{ n.fx = null; n.fy = null; }});
+    primaryNodes.clear();
+    selectedLinks.clear();
+    renderSelection();
+    document.getElementById('search-input').value = '';
+    simulation.alpha(1).restart();
+}});
 
 // ---------------------------------------------------------------------------
 // Tooltip
@@ -1406,6 +1420,7 @@ canvas {{ display: block; }}
         <div id="mode-toggle" style="margin-top:10px;display:flex;gap:4px;">
             <a class="mode-btn" href="brain-2d.html">2D</a>
             <a class="mode-btn active" href="#">3D</a>
+            <a class="mode-btn" href="#" id="reset-btn">Reset</a>
         </div>
     </div>
     <div id="search">
@@ -1991,6 +2006,20 @@ document.addEventListener('keydown', (e) => {{
         e.preventDefault();
         searchInput.focus();
     }}
+}});
+
+// Reset button
+document.getElementById('reset-btn').addEventListener('click', (e) => {{
+    e.preventDefault();
+    selectedNodes.clear();
+    selectedLinks.clear();
+    hoveredIds.clear();
+    applyVisuals();
+    document.getElementById('search-input').value = '';
+    // Reset camera to initial position
+    camera.position.set(0, 100, 400);
+    controls.target.set(0, 0, 0);
+    controls.update();
 }});
 
 // Resize
