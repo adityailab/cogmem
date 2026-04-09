@@ -1712,7 +1712,8 @@ const raycaster = new THREE.Raycaster();
 raycaster.params.Points = {{ threshold: 5 }};
 const mouse = new THREE.Vector2();
 let hoveredNode = null;
-const selectedNodes = new Set();
+const selectedNodes = new Set();  // primary nodes (clicked)
+const selectedLinks = new Set();  // explicitly clicked links
 const tooltip = document.getElementById('tooltip');
 
 const allClickable = [...nodeMeshes, ...linkMeshes];
@@ -1773,16 +1774,11 @@ function onClick(event) {{
         const mesh = intersects[0].object;
         const d = mesh.userData;
         if (d._isLink) {{
-            // Link click: select both endpoints
-            selectedNodes.add(d.source);
-            selectedNodes.add(d.target);
+            // Link click: add as selected link
+            selectedLinks.add(d.source + '|' + d.target);
         }} else {{
-            const id = d.id;
-            selectedNodes.add(id);
-            links.forEach(l => {{
-                if (l.source === id) selectedNodes.add(l.target);
-                if (l.target === id) selectedNodes.add(l.source);
-            }});
+            // Node click: add as primary
+            selectedNodes.add(d.id);
         }}
         applySelection();
     }}
@@ -1794,14 +1790,14 @@ function onDblClick(event) {{
     if (intersects.length > 0) {{
         const d = intersects[0].object.userData;
         if (d._isLink) {{
-            selectedNodes.delete(d.source);
-            selectedNodes.delete(d.target);
+            selectedLinks.delete(d.source + '|' + d.target);
         }} else {{
             selectedNodes.delete(d.id);
         }}
         applySelection();
     }} else {{
         selectedNodes.clear();
+        selectedLinks.clear();
         applySelection();
     }}
 }}
@@ -1818,28 +1814,58 @@ function showLinkTooltip(srcLabel, relation, tgtLabel, strength, event) {{
 function applySelection() {{ applyVisuals(); }}
 
 function applyVisuals() {{
-    // Combine click-pinned + hover-temporary selections
-    const activeIds = new Set([...selectedNodes, ...hoveredIds]);
-    const hasActive = activeIds.size > 0;
+    // Primary = clicked nodes. Neighbors = nodes connected to primary (not their own connections).
+    const primaryIds = new Set([...selectedNodes, ...hoveredIds]);
+    const hasLinks = selectedLinks.size > 0;
+
+    // Build neighbor set: connected to primary but not primary themselves
+    const neighborIds = new Set();
+    if (primaryIds.size > 0) {{
+        links.forEach(l => {{
+            if (primaryIds.has(l.source) && !primaryIds.has(l.target)) neighborIds.add(l.target);
+            if (primaryIds.has(l.target) && !primaryIds.has(l.source)) neighborIds.add(l.source);
+        }});
+    }}
+    // Also add endpoints of explicitly selected links
+    selectedLinks.forEach(lk => {{
+        const [s, t] = lk.split('|');
+        if (!primaryIds.has(s)) neighborIds.add(s);
+        if (!primaryIds.has(t)) neighborIds.add(t);
+    }});
+
+    const allHighlighted = new Set([...primaryIds, ...neighborIds]);
+    const hasActive = allHighlighted.size > 0;
+
+    // Build set of highlighted links: only those with a PRIMARY end, or explicitly selected
+    const highlightedLinkKeys = new Set(selectedLinks);
+    links.forEach(l => {{
+        if (primaryIds.has(l.source) || primaryIds.has(l.target)) {{
+            highlightedLinkKeys.add(l.source + '|' + l.target);
+        }}
+    }});
 
     nodeMeshes.forEach(mesh => {{
         const d = mesh.userData;
         const strength = d.strength || 0.5;
         if (!hasActive) {{
-            // Default state
             mesh.material.opacity = 0.4 + strength * 0.6;
             mesh.material.emissiveIntensity = 0.3 + strength * 0.4;
             mesh.scale.setScalar(1.0);
         }} else if (selectedNodes.has(d.id)) {{
-            // Pinned (clicked) — brightest
+            // Pinned primary — brightest
             mesh.material.opacity = 0.95;
             mesh.material.emissiveIntensity = 0.9;
             mesh.scale.setScalar(1.15);
         }} else if (hoveredIds.has(d.id)) {{
-            // Hover highlight — bright but slightly less than pinned
+            // Hover primary
             mesh.material.opacity = 0.85;
             mesh.material.emissiveIntensity = 0.75;
             mesh.scale.setScalar(1.2);
+        }} else if (neighborIds.has(d.id)) {{
+            // Neighbor — highlighted but not as bright
+            mesh.material.opacity = 0.7;
+            mesh.material.emissiveIntensity = 0.5;
+            mesh.scale.setScalar(1.0);
         }} else {{
             // Dimmed
             mesh.material.opacity = 0.04;
@@ -1849,16 +1875,12 @@ function applyVisuals() {{
     }});
 
     linkLines.forEach(({{ line, data }}) => {{
-        const srcActive = activeIds.has(data.source);
-        const tgtActive = activeIds.has(data.target);
+        const key = data.source + '|' + data.target;
+        const revKey = data.target + '|' + data.source;
         if (!hasActive) {{
             line.material.opacity = 0.25 + (data.strength || 0.3) * 0.35;
-        }} else if (srcActive && tgtActive) {{
-            // Both ends highlighted — full bright
-            line.material.opacity = 0.9;
-        }} else if (srcActive || tgtActive) {{
-            // One end highlighted — dim connection
-            line.material.opacity = 0.15;
+        }} else if (highlightedLinkKeys.has(key) || highlightedLinkKeys.has(revKey)) {{
+            line.material.opacity = 0.8;
         }} else {{
             line.material.opacity = 0.02;
         }}
