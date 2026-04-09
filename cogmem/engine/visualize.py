@@ -14,7 +14,7 @@ from cogmem.tiers.global_mem import GlobalTier
 from cogmem.utils.repo_detect import find_repo_root
 
 
-def visualize(cwd: str | None = None, output: str | None = None, no_open: bool = False) -> str:
+def visualize(cwd: str | None = None, output: str | None = None, no_open: bool = False, mode: str = "3d") -> str:
     """Generate an interactive brain visualization of all memory."""
     cwd_path = Path(cwd) if cwd else Path.cwd()
 
@@ -50,7 +50,10 @@ def visualize(cwd: str | None = None, output: str | None = None, no_open: bool =
 
     # Generate HTML
     graph_data = {"nodes": nodes, "links": links, "regions": regions}
-    html = _generate_html(graph_data)
+    if mode == "3d":
+        html = _generate_html_3d(graph_data)
+    else:
+        html = _generate_html(graph_data)
 
     # Write output
     if output:
@@ -806,9 +809,7 @@ const linkElements = linkG.selectAll('line')
         const sid = typeof d.source === 'object' ? d.source.id : d.source;
         const tid = typeof d.target === 'object' ? d.target.id : d.target;
         const linkKey = sid + '|' + tid;
-        // Single click: add to selection
-        selectedNodes.add(sid);
-        selectedNodes.add(tid);
+        // Single click: add link (nodes become neighbors, not primary)
         selectedLinks.add(linkKey);
         renderSelection();
     }})
@@ -819,9 +820,6 @@ const linkElements = linkG.selectAll('line')
         const linkKey = sid + '|' + tid;
         // Double click: remove from selection
         selectedLinks.delete(linkKey);
-        // Only remove nodes if they're not part of another selected link
-        if (!isNodeInSelectedLinks(sid)) selectedNodes.delete(sid);
-        if (!isNodeInSelectedLinks(tid)) selectedNodes.delete(tid);
         renderSelection();
     }});
 
@@ -959,33 +957,49 @@ function hideTooltip() {{
 // ---------------------------------------------------------------------------
 // Additive selection — single click adds, double click removes
 // ---------------------------------------------------------------------------
-const selectedNodes = new Set();
+// Primary = explicitly clicked nodes (their connections are shown)
+// Neighbor = nodes at other end of primary connections (just highlighted, no cascade)
+const primaryNodes = new Set();
 const selectedLinks = new Set();
 
 function clearSelection() {{
-    selectedNodes.clear();
+    primaryNodes.clear();
     selectedLinks.clear();
     renderSelection();
 }}
 
 function renderSelection() {{
-    const hasSelection = selectedNodes.size > 0 || selectedLinks.size > 0;
+    const hasPrimary = primaryNodes.size > 0;
+    const hasLinks = selectedLinks.size > 0;
+    const hasSelection = hasPrimary || hasLinks;
 
-    // Build full set of highlighted nodes (selected + their neighbors via selected links)
-    const highlightedNodes = new Set(selectedNodes);
-    selectedLinks.forEach(lk => {{
-        const [s, t] = lk.split('|');
-        highlightedNodes.add(s);
-        highlightedNodes.add(t);
-    }});
-
-    // Build set of highlighted links (explicitly selected + any link between two highlighted nodes)
-    const highlightedLinkKeys = new Set(selectedLinks);
-    if (hasSelection) {{
+    // Build neighbor set: nodes connected to primary nodes (but not primary themselves)
+    const neighborNodes = new Set();
+    if (hasPrimary) {{
         links.forEach(l => {{
             const sid = typeof l.source === 'object' ? l.source.id : l.source;
             const tid = typeof l.target === 'object' ? l.target.id : l.target;
-            if (selectedNodes.has(sid) || selectedNodes.has(tid)) {{
+            if (primaryNodes.has(sid) && !primaryNodes.has(tid)) neighborNodes.add(tid);
+            if (primaryNodes.has(tid) && !primaryNodes.has(sid)) neighborNodes.add(sid);
+        }});
+    }}
+    // Also add nodes from explicitly selected links
+    selectedLinks.forEach(lk => {{
+        const [s, t] = lk.split('|');
+        if (!primaryNodes.has(s)) neighborNodes.add(s);
+        if (!primaryNodes.has(t)) neighborNodes.add(t);
+    }});
+
+    const allHighlighted = new Set([...primaryNodes, ...neighborNodes]);
+
+    // Links to highlight: only those with at least one PRIMARY end, or explicitly selected
+    const highlightedLinkKeys = new Set(selectedLinks);
+    if (hasPrimary) {{
+        links.forEach(l => {{
+            const sid = typeof l.source === 'object' ? l.source.id : l.source;
+            const tid = typeof l.target === 'object' ? l.target.id : l.target;
+            // Only highlight if at least one end is PRIMARY (not just neighbor)
+            if (primaryNodes.has(sid) || primaryNodes.has(tid)) {{
                 highlightedLinkKeys.add(sid + '|' + tid);
             }}
         }});
@@ -995,7 +1009,7 @@ function renderSelection() {{
         let cls = 'node';
         if (n.emotion === 'pain' || n.emotion === 'danger') cls += ' danger';
         if (!hasSelection) return cls;
-        if (highlightedNodes.has(n.id)) cls += ' highlighted';
+        if (allHighlighted.has(n.id)) cls += ' highlighted';
         else cls += ' dimmed';
         return cls;
     }});
@@ -1007,7 +1021,7 @@ function renderSelection() {{
         const key = sid + '|' + tid;
         const revKey = tid + '|' + sid;
         if (highlightedLinkKeys.has(key) || highlightedLinkKeys.has(revKey)) {{
-            return selectedLinks.has(key) || selectedLinks.has(revKey) ? 0.9 : 0.4;
+            return selectedLinks.has(key) || selectedLinks.has(revKey) ? 0.9 : 0.5;
         }}
         return 0.02;
     }}).attr('stroke-width', l => {{
@@ -1017,29 +1031,22 @@ function renderSelection() {{
         const key = sid + '|' + tid;
         const revKey = tid + '|' + sid;
         if (selectedLinks.has(key) || selectedLinks.has(revKey)) return 4;
+        if (highlightedLinkKeys.has(key) || highlightedLinkKeys.has(revKey)) return 2;
         return 0.5 + l.strength * 1.5;
     }});
 }}
 
-function isNodeInSelectedLinks(nodeId) {{
-    for (const lk of selectedLinks) {{
-        const [s, t] = lk.split('|');
-        if (s === nodeId || t === nodeId) return true;
-    }}
-    return false;
-}}
-
 function highlightConnected(event, d) {{
     event.stopPropagation();
-    // Single click: add node + its connections
-    selectedNodes.add(d.id);
+    // Single click: add as primary node
+    primaryNodes.add(d.id);
     renderSelection();
 }}
 
 // Double-click node to remove from selection
 nodeElements.on('dblclick', function(event, d) {{
     event.stopPropagation();
-    selectedNodes.delete(d.id);
+    primaryNodes.delete(d.id);
     // Also remove links that were only there because of this node
     for (const lk of [...selectedLinks]) {{
         const [s, t] = lk.split('|');
@@ -1166,3 +1173,775 @@ setTimeout(() => {{
 </html>"""
 
     return html
+
+
+def _generate_html_3d(data: dict) -> str:
+    """Generate a 3D brain visualization using Three.js."""
+    graph_json = json.dumps(data, default=str)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cogmem — 3D Brain</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{
+    background: #050510;
+    color: #e0e0e0;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    overflow: hidden;
+}}
+canvas {{ display: block; }}
+
+#ui {{
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 10;
+}}
+#ui > * {{ pointer-events: auto; }}
+
+#controls {{
+    position: fixed;
+    top: 20px;
+    left: 20px;
+}}
+#controls h1 {{
+    font-size: 20px;
+    font-weight: 600;
+    color: #4ECDC4;
+    letter-spacing: 3px;
+    text-shadow: 0 0 20px rgba(78, 205, 196, 0.5);
+}}
+#controls .subtitle {{
+    font-size: 11px;
+    opacity: 0.3;
+    margin-top: 2px;
+}}
+
+#search {{
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+}}
+#search input {{
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #e0e0e0;
+    padding: 8px 20px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-family: inherit;
+    width: 300px;
+    outline: none;
+    backdrop-filter: blur(10px);
+}}
+#search input:focus {{
+    border-color: #4ECDC4;
+    width: 380px;
+    box-shadow: 0 0 20px rgba(78, 205, 196, 0.2);
+}}
+#search input::placeholder {{ color: rgba(255,255,255,0.2); }}
+
+#stats {{
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    text-align: right;
+    font-size: 11px;
+    opacity: 0.4;
+}}
+#stats .val {{ color: #4ECDC4; font-weight: bold; }}
+
+#tooltip {{
+    position: fixed;
+    background: rgba(10, 10, 30, 0.95);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 12px;
+    line-height: 1.6;
+    max-width: 380px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    backdrop-filter: blur(15px);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+    z-index: 100;
+}}
+#tooltip.visible {{ opacity: 1; }}
+#tooltip .tt-type {{
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    opacity: 0.4;
+}}
+#tooltip .tt-title {{
+    font-size: 14px;
+    font-weight: bold;
+    margin: 4px 0;
+}}
+#tooltip .tt-emotion {{
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: bold;
+    margin-bottom: 4px;
+}}
+#tooltip .tt-body {{
+    opacity: 0.6;
+    font-size: 11px;
+}}
+#tooltip .tt-meta {{
+    margin-top: 8px;
+    font-size: 10px;
+    opacity: 0.3;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    padding-top: 6px;
+}}
+
+#legend {{
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}}
+.legend-item {{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    opacity: 0.5;
+    cursor: pointer;
+}}
+.legend-item:hover, .legend-item.active {{ opacity: 1; }}
+.legend-dot {{
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}}
+
+#hint {{
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    font-size: 10px;
+    opacity: 0.2;
+}}
+</style>
+</head>
+<body>
+<div id="ui">
+    <div id="controls">
+        <h1>COGMEM</h1>
+        <div class="subtitle">3d cognitive memory</div>
+    </div>
+    <div id="search">
+        <input type="text" placeholder="Search memories..." id="search-input">
+    </div>
+    <div id="stats"></div>
+    <div id="legend"></div>
+    <div id="hint">drag to rotate / scroll to zoom / click nodes to explore</div>
+</div>
+<div id="tooltip"></div>
+
+<script>
+const DATA = {graph_json};
+
+const REGION_COLORS = {{
+    episodic:    0x4ECDC4,
+    semantic:    0x45B7D1,
+    spatial:     0x96CEB4,
+    pattern:     0xFFEAA7,
+    emotional:   0xFF6B6B,
+    prospective: 0xDDA0DD,
+    entity:      0x8090A0,
+}};
+
+const REGION_COLORS_CSS = {{
+    episodic:    '#4ECDC4',
+    semantic:    '#45B7D1',
+    spatial:     '#96CEB4',
+    pattern:     '#FFEAA7',
+    emotional:   '#FF6B6B',
+    prospective: '#DDA0DD',
+    entity:      '#8090A0',
+}};
+
+const EMOTION_COLORS = {{
+    pain: 0xFF4444, danger: 0xFF6B35, frustration: 0xFF8C42,
+    trust: 0x4ECDC4, pride: 0x45B7D1, relief: 0x96CEB4,
+    curiosity: 0xDDA0DD, neutral: 0x556677,
+}};
+
+const EMOTION_COLORS_CSS = {{
+    pain: '#FF4444', danger: '#FF6B35', frustration: '#FF8C42',
+    trust: '#4ECDC4', pride: '#45B7D1', relief: '#96CEB4',
+    curiosity: '#DDA0DD', neutral: '#556677',
+}};
+
+// ---------------------------------------------------------------------------
+// Scene setup
+// ---------------------------------------------------------------------------
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x050510, 0.0015);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 5000);
+camera.position.set(0, 100, 400);
+
+const renderer = new THREE.WebGLRenderer({{ antialias: true, alpha: true }});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.minDistance = 50;
+controls.maxDistance = 1500;
+controls.autoRotate = false;
+controls.autoRotateSpeed = 0.3;
+
+// Lights
+scene.add(new THREE.AmbientLight(0x222233, 1));
+const pointLight = new THREE.PointLight(0x4ECDC4, 0.8, 800);
+pointLight.position.set(0, 200, 0);
+scene.add(pointLight);
+const pointLight2 = new THREE.PointLight(0xFF6B6B, 0.4, 600);
+pointLight2.position.set(-200, -100, 100);
+scene.add(pointLight2);
+
+// ---------------------------------------------------------------------------
+// Brain shell — translucent ellipsoid
+// ---------------------------------------------------------------------------
+const brainGeo = new THREE.SphereGeometry(180, 64, 48);
+brainGeo.scale(1.2, 1.0, 1.0);
+const brainMat = new THREE.MeshPhongMaterial({{
+    color: 0x1a1a2e,
+    transparent: true,
+    opacity: 0.06,
+    wireframe: false,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+}});
+const brainShell = new THREE.Mesh(brainGeo, brainMat);
+scene.add(brainShell);
+
+// Wireframe overlay
+const wireGeo = new THREE.SphereGeometry(182, 32, 24);
+wireGeo.scale(1.2, 1.0, 1.0);
+const wireMat = new THREE.MeshBasicMaterial({{
+    color: 0x4ECDC4,
+    transparent: true,
+    opacity: 0.03,
+    wireframe: true,
+}});
+scene.add(new THREE.Mesh(wireGeo, wireMat));
+
+// ---------------------------------------------------------------------------
+// Region centers in 3D — brain-lobe positions
+// ---------------------------------------------------------------------------
+const R = 120;
+const regionCenters3D = {{
+    semantic:    new THREE.Vector3(0, R * 0.9, -R * 0.3),       // frontal top
+    episodic:    new THREE.Vector3(-R * 0.8, R * 0.2, R * 0.5),  // left temporal
+    spatial:     new THREE.Vector3(R * 0.8, R * 0.2, -R * 0.5),  // right parietal
+    pattern:     new THREE.Vector3(-R * 0.7, -R * 0.5, -R * 0.4),// left lower
+    prospective: new THREE.Vector3(R * 0.7, -R * 0.5, R * 0.4),  // right lower
+    emotional:   new THREE.Vector3(0, -R * 0.8, 0),               // bottom (limbic)
+    entity:      new THREE.Vector3(0, 0, 0),                      // center (core)
+}};
+
+// ---------------------------------------------------------------------------
+// Create nodes
+// ---------------------------------------------------------------------------
+const nodes = DATA.nodes;
+const links = DATA.links.filter(l =>
+    nodes.some(n => n.id === l.source) && nodes.some(n => n.id === l.target)
+);
+
+const nodeMap = {{}};
+const nodeMeshes = [];
+const nodeGroup = new THREE.Group();
+scene.add(nodeGroup);
+
+nodes.forEach((n, i) => {{
+    const center = regionCenters3D[n.region] || new THREE.Vector3(0, 0, 0);
+    const spread = n.region === 'entity' ? 80 : 50;
+
+    const x = center.x + (Math.random() - 0.5) * spread;
+    const y = center.y + (Math.random() - 0.5) * spread;
+    const z = center.z + (Math.random() - 0.5) * spread;
+
+    const size = (n.size || 5) * 0.6;
+    const color = (n.emotion && n.emotion !== 'neutral' && EMOTION_COLORS[n.emotion])
+        ? EMOTION_COLORS[n.emotion]
+        : (REGION_COLORS[n.region] || 0x666666);
+
+    const geo = new THREE.SphereGeometry(size, 12, 8);
+    const mat = new THREE.MeshPhongMaterial({{
+        color: color,
+        emissive: color,
+        emissiveIntensity: 0.3 + (n.strength || 0.5) * 0.4,
+        transparent: true,
+        opacity: 0.4 + (n.strength || 0.5) * 0.6,
+    }});
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    mesh.userData = {{ ...n, index: i }};
+    nodeGroup.add(mesh);
+    nodeMeshes.push(mesh);
+    nodeMap[n.id] = mesh;
+}});
+
+// Glow sprites for key nodes (emotions, patterns)
+const glowTexture = _createGlowTexture();
+nodes.forEach((n, i) => {{
+    if (n.emotion === 'pain' || n.emotion === 'danger' || n.type === 'pattern') {{
+        const color = EMOTION_COLORS[n.emotion] || REGION_COLORS[n.region] || 0xffffff;
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({{
+            map: glowTexture,
+            color: color,
+            transparent: true,
+            opacity: 0.15,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+        }}));
+        const size = (n.size || 5) * 3;
+        sprite.scale.set(size, size, 1);
+        sprite.position.copy(nodeMeshes[i].position);
+        nodeGroup.add(sprite);
+    }}
+}});
+
+function _createGlowTexture() {{
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gradient.addColorStop(0, 'rgba(255,255,255,1)');
+    gradient.addColorStop(0.3, 'rgba(255,255,255,0.3)');
+    gradient.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(canvas);
+}}
+
+// ---------------------------------------------------------------------------
+// Create links as lines
+// ---------------------------------------------------------------------------
+const linkGroup = new THREE.Group();
+scene.add(linkGroup);
+const linkLines = [];
+
+const linkMeshes = [];
+
+function createTubeLink(srcPos, tgtPos, color, opacity, data) {{
+    const dir = new THREE.Vector3().subVectors(tgtPos, srcPos);
+    const length = dir.length();
+    const mid = new THREE.Vector3().addVectors(srcPos, tgtPos).multiplyScalar(0.5);
+
+    const geo = new THREE.CylinderGeometry(0.4, 0.4, length, 4, 1);
+    const mat = new THREE.MeshBasicMaterial({{
+        color: color,
+        transparent: true,
+        opacity: opacity,
+        depthWrite: false,
+    }});
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.copy(mid);
+    // Align cylinder along the direction
+    mesh.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0),
+        dir.normalize()
+    );
+    mesh.userData = {{ ...data, _isLink: true }};
+    return mesh;
+}}
+
+links.forEach(l => {{
+    const srcMesh = nodeMap[l.source];
+    const tgtMesh = nodeMap[l.target];
+    if (!srcMesh || !tgtMesh) return;
+
+    const linkColor = (srcMesh.userData.emotion === 'pain' || tgtMesh.userData.emotion === 'pain')
+        ? 0xFF6B6B
+        : (srcMesh.userData.emotion === 'danger' || tgtMesh.userData.emotion === 'danger')
+        ? 0xFF6B35
+        : 0x4ECDC4;
+    const opacity = 0.25 + (l.strength || 0.3) * 0.35;
+
+    const tubeMesh = createTubeLink(srcMesh.position, tgtMesh.position, linkColor, opacity, l);
+    linkGroup.add(tubeMesh);
+    linkMeshes.push(tubeMesh);
+    linkLines.push({{ line: tubeMesh, src: srcMesh, tgt: tgtMesh, data: l }});
+}});
+
+// ---------------------------------------------------------------------------
+// Region labels — 3D text sprites
+// ---------------------------------------------------------------------------
+Object.entries(regionCenters3D).forEach(([region, pos]) => {{
+    const count = nodes.filter(n => n.region === region).length;
+    if (count === 0) return;
+    const sprite = makeTextSprite(region.toUpperCase(), {{
+        fontSize: 14,
+        color: REGION_COLORS_CSS[region] || '#ffffff',
+        opacity: 0.15,
+    }});
+    sprite.position.set(pos.x, pos.y + 35, pos.z);
+    sprite.scale.set(60, 30, 1);
+    scene.add(sprite);
+}});
+
+function makeTextSprite(text, opts = {{}}) {{
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    ctx.font = `${{opts.fontSize || 14}}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = opts.color || '#ffffff';
+    ctx.globalAlpha = opts.opacity || 0.3;
+    ctx.letterSpacing = '4px';
+    ctx.fillText(text, 256, 80);
+    const tex = new THREE.CanvasTexture(canvas);
+    return new THREE.Sprite(new THREE.SpriteMaterial({{
+        map: tex,
+        transparent: true,
+        depthWrite: false,
+    }}));
+}}
+
+// ---------------------------------------------------------------------------
+// Particle field background
+// ---------------------------------------------------------------------------
+const particleCount = 500;
+const particleGeo = new THREE.BufferGeometry();
+const positions = new Float32Array(particleCount * 3);
+for (let i = 0; i < particleCount * 3; i++) {{
+    positions[i] = (Math.random() - 0.5) * 1500;
+}}
+particleGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+const particleMat = new THREE.PointsMaterial({{
+    color: 0x4ECDC4,
+    size: 1,
+    transparent: true,
+    opacity: 0.15,
+    depthWrite: false,
+}});
+scene.add(new THREE.Points(particleGeo, particleMat));
+
+// ---------------------------------------------------------------------------
+// Raycaster for hover/click
+// ---------------------------------------------------------------------------
+const raycaster = new THREE.Raycaster();
+raycaster.params.Points = {{ threshold: 5 }};
+const mouse = new THREE.Vector2();
+let hoveredNode = null;
+const selectedNodes = new Set();
+const tooltip = document.getElementById('tooltip');
+
+const allClickable = [...nodeMeshes, ...linkMeshes];
+
+let hoveredIds = new Set();  // nodes highlighted by hover
+
+function onMouseMove(event) {{
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(allClickable);
+
+    if (intersects.length > 0) {{
+        const mesh = intersects[0].object;
+        const d = mesh.userData;
+
+        if (hoveredNode !== mesh) {{
+            hoveredNode = mesh;
+
+            // Build hover set — the hovered item + its neighbors
+            hoveredIds.clear();
+            if (d._isLink) {{
+                hoveredIds.add(d.source);
+                hoveredIds.add(d.target);
+                const srcLabel = nodeMap[d.source] ? nodeMap[d.source].userData.label : d.source;
+                const tgtLabel = nodeMap[d.target] ? nodeMap[d.target].userData.label : d.target;
+                const LINK_LABELS = {{touched:'touched by',related:'related to',evidence:'evidence for',feels:'emotion about',formed_from:'formed from',defined_in:'defined in',seen_in:'seen in'}};
+                showLinkTooltip(srcLabel, LINK_LABELS[d.type] || d.type, tgtLabel, d.strength || 0, event);
+            }} else {{
+                hoveredIds.add(d.id);
+                links.forEach(l => {{
+                    if (l.source === d.id) hoveredIds.add(l.target);
+                    if (l.target === d.id) hoveredIds.add(l.source);
+                }});
+                showTooltip(d, event);
+            }}
+            applyVisuals();
+        }} else {{
+            moveTooltipTo(event);
+        }}
+        document.body.style.cursor = 'pointer';
+    }} else {{
+        if (hoveredNode) {{
+            hoveredNode = null;
+            hoveredIds.clear();
+            applyVisuals();
+        }}
+        tooltip.classList.remove('visible');
+        document.body.style.cursor = 'default';
+    }}
+}}
+
+function onClick(event) {{
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(allClickable);
+    if (intersects.length > 0) {{
+        const mesh = intersects[0].object;
+        const d = mesh.userData;
+        if (d._isLink) {{
+            // Link click: select both endpoints
+            selectedNodes.add(d.source);
+            selectedNodes.add(d.target);
+        }} else {{
+            const id = d.id;
+            selectedNodes.add(id);
+            links.forEach(l => {{
+                if (l.source === id) selectedNodes.add(l.target);
+                if (l.target === id) selectedNodes.add(l.source);
+            }});
+        }}
+        applySelection();
+    }}
+}}
+
+function onDblClick(event) {{
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(allClickable);
+    if (intersects.length > 0) {{
+        const d = intersects[0].object.userData;
+        if (d._isLink) {{
+            selectedNodes.delete(d.source);
+            selectedNodes.delete(d.target);
+        }} else {{
+            selectedNodes.delete(d.id);
+        }}
+        applySelection();
+    }} else {{
+        selectedNodes.clear();
+        applySelection();
+    }}
+}}
+
+function showLinkTooltip(srcLabel, relation, tgtLabel, strength, event) {{
+    tooltip.innerHTML = `<div class="tt-type">connection</div>`
+        + `<div class="tt-title">${{srcLabel}}</div>`
+        + `<div class="tt-body">${{relation}} <strong>${{tgtLabel}}</strong></div>`
+        + `<div class="tt-meta">strength: ${{strength.toFixed(2)}}</div>`;
+    tooltip.classList.add('visible');
+    moveTooltipTo(event);
+}}
+
+function applySelection() {{ applyVisuals(); }}
+
+function applyVisuals() {{
+    // Combine click-pinned + hover-temporary selections
+    const activeIds = new Set([...selectedNodes, ...hoveredIds]);
+    const hasActive = activeIds.size > 0;
+
+    nodeMeshes.forEach(mesh => {{
+        const d = mesh.userData;
+        const strength = d.strength || 0.5;
+        if (!hasActive) {{
+            // Default state
+            mesh.material.opacity = 0.4 + strength * 0.6;
+            mesh.material.emissiveIntensity = 0.3 + strength * 0.4;
+            mesh.scale.setScalar(1.0);
+        }} else if (selectedNodes.has(d.id)) {{
+            // Pinned (clicked) — brightest
+            mesh.material.opacity = 0.95;
+            mesh.material.emissiveIntensity = 0.9;
+            mesh.scale.setScalar(1.15);
+        }} else if (hoveredIds.has(d.id)) {{
+            // Hover highlight — bright but slightly less than pinned
+            mesh.material.opacity = 0.85;
+            mesh.material.emissiveIntensity = 0.75;
+            mesh.scale.setScalar(1.2);
+        }} else {{
+            // Dimmed
+            mesh.material.opacity = 0.04;
+            mesh.material.emissiveIntensity = 0.03;
+            mesh.scale.setScalar(1.0);
+        }}
+    }});
+
+    linkLines.forEach(({{ line, data }}) => {{
+        const srcActive = activeIds.has(data.source);
+        const tgtActive = activeIds.has(data.target);
+        if (!hasActive) {{
+            line.material.opacity = 0.25 + (data.strength || 0.3) * 0.35;
+        }} else if (srcActive && tgtActive) {{
+            // Both ends highlighted — full bright
+            line.material.opacity = 0.9;
+        }} else if (srcActive || tgtActive) {{
+            // One end highlighted — dim connection
+            line.material.opacity = 0.15;
+        }} else {{
+            line.material.opacity = 0.02;
+        }}
+    }});
+}}
+
+window.addEventListener('mousemove', onMouseMove);
+window.addEventListener('click', onClick);
+window.addEventListener('dblclick', onDblClick);
+
+// ---------------------------------------------------------------------------
+// Tooltip
+// ---------------------------------------------------------------------------
+function showTooltip(d, event) {{
+    const emotionColor = EMOTION_COLORS_CSS[d.emotion] || '#666';
+    let html = `<div class="tt-type">${{d.type}} ${{d.tier !== 'repo' ? '(' + d.tier + ')' : ''}}</div>`;
+    html += `<div class="tt-title">${{d.label}}</div>`;
+    if (d.emotion && d.emotion !== 'neutral') {{
+        html += `<div class="tt-emotion" style="background:${{emotionColor}}33;color:${{emotionColor}}">${{d.emotion.toUpperCase()}} (${{(d.intensity || 0).toFixed(1)}})</div>`;
+    }}
+    let body = '';
+    if (d.story) body += d.story.substring(0, 200) + '<br>';
+    if (d.learned) body += '<strong>Learned:</strong> ' + d.learned.substring(0, 200) + '<br>';
+    if (d.what) body += d.what + '<br>';
+    if (d.signature) body += '<code>' + d.signature + '</code><br>';
+    if (d.consequence) body += '<strong>Risk:</strong> ' + d.consequence + '<br>';
+    if (d.reason) body += d.reason + '<br>';
+    if (body) html += `<div class="tt-body">${{body}}</div>`;
+    let meta = [];
+    if (d.strength !== undefined) meta.push('strength: ' + d.strength.toFixed(2));
+    if (d.phase) meta.push('phase: ' + d.phase);
+    if (d.date) meta.push(d.date);
+    if (d.kind) meta.push(d.kind);
+    if (meta.length) html += `<div class="tt-meta">${{meta.join(' &middot; ')}}</div>`;
+    tooltip.innerHTML = html;
+    tooltip.classList.add('visible');
+    moveTooltipTo(event);
+}}
+
+function moveTooltipTo(event) {{
+    const x = event.clientX + 15;
+    const y = event.clientY + 15;
+    tooltip.style.left = Math.min(x, window.innerWidth - 400) + 'px';
+    tooltip.style.top = Math.min(y, window.innerHeight - 200) + 'px';
+}}
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+const searchInput = document.getElementById('search-input');
+searchInput.addEventListener('input', (e) => {{
+    const q = e.target.value.toLowerCase();
+    if (!q) {{ selectedNodes.clear(); applySelection(); return; }}
+    selectedNodes.clear();
+    nodes.forEach(n => {{
+        const text = (n.label + ' ' + (n.story || '') + ' ' + (n.learned || '') +
+                      ' ' + (n.what || '') + ' ' + (n.signature || '') + ' ' + (n.reason || '')).toLowerCase();
+        if (text.includes(q)) selectedNodes.add(n.id);
+    }});
+    applySelection();
+}});
+
+// ---------------------------------------------------------------------------
+// Legend
+// ---------------------------------------------------------------------------
+const legend = document.getElementById('legend');
+Object.entries(REGION_COLORS_CSS).forEach(([region, color]) => {{
+    const count = nodes.filter(n => n.region === region).length;
+    if (count === 0) return;
+    const item = document.createElement('div');
+    item.className = 'legend-item active';
+    item.innerHTML = `<div class="legend-dot" style="background:${{color}}"></div>${{region}} (${{count}})`;
+    let visible = true;
+    item.addEventListener('click', () => {{
+        visible = !visible;
+        item.classList.toggle('active', visible);
+        nodeMeshes.forEach(m => {{
+            if (m.userData.region === region) m.visible = visible;
+        }});
+        linkLines.forEach(({{ line, src, tgt }}) => {{
+            if (src.userData.region === region || tgt.userData.region === region) {{
+                line.visible = visible;
+            }}
+        }});
+    }});
+    legend.appendChild(item);
+}});
+
+// Stats
+const stats = document.getElementById('stats');
+const typeCounts = {{}};
+nodes.forEach(n => {{ typeCounts[n.type] = (typeCounts[n.type] || 0) + 1; }});
+let statsHtml = `<div><span class="val">${{nodes.length}}</span> memories</div>`;
+statsHtml += `<div><span class="val">${{links.length}}</span> connections</div>`;
+Object.entries(typeCounts).sort((a,b) => b[1]-a[1]).forEach(([t, c]) => {{
+    statsHtml += `<div>${{c}} ${{t}}s</div>`;
+}});
+stats.innerHTML = statsHtml;
+
+// Keyboard
+document.addEventListener('keydown', (e) => {{
+    if (e.key === 'Escape') {{
+        searchInput.value = '';
+        selectedNodes.clear();
+        applySelection();
+        // controls.autoRotate stays off
+    }}
+    if (e.key === '/' && document.activeElement !== searchInput) {{
+        e.preventDefault();
+        searchInput.focus();
+    }}
+}});
+
+// Resize
+window.addEventListener('resize', () => {{
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}});
+
+// ---------------------------------------------------------------------------
+// Animation loop
+// ---------------------------------------------------------------------------
+let time = 0;
+function animate() {{
+    requestAnimationFrame(animate);
+    time += 0.01;
+
+    controls.update();
+
+    // Gentle pulse on danger/pain nodes
+    nodeMeshes.forEach(mesh => {{
+        const d = mesh.userData;
+        if ((d.emotion === 'pain' || d.emotion === 'danger') && !selectedNodes.size) {{
+            const pulse = 0.3 + Math.sin(time * 2 + mesh.position.x * 0.1) * 0.15;
+            mesh.material.emissiveIntensity = pulse + (d.strength || 0.5) * 0.3;
+        }}
+    }});
+
+    // Slow brain shell rotation
+    brainShell.rotation.y = time * 0.05;
+
+    renderer.render(scene, camera);
+}}
+animate();
+</script>
+</body>
+</html>"""

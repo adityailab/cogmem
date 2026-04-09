@@ -132,11 +132,12 @@ def encode_session():
 @cli.command()
 @click.option("--output", "-o", default=None, help="Output path for HTML file.")
 @click.option("--no-open", is_flag=True, help="Don't open in browser.")
-def visualize(output, no_open):
+@click.option("--mode", default="3d", type=click.Choice(["2d", "3d"]), help="Visualization mode.")
+def visualize(output, no_open, mode):
     """Open interactive brain visualization of memory."""
     from cogmem.engine.visualize import visualize as do_visualize
 
-    result = do_visualize(output=output, no_open=no_open)
+    result = do_visualize(output=output, no_open=no_open, mode=mode)
     click.echo(result)
 
 

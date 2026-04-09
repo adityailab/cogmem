@@ -187,7 +187,7 @@ class TestVisualize:
 
         content = output_file.read_text()
         assert "<!DOCTYPE html>" in content
-        assert "d3" in content.lower()
+        assert "three" in content.lower() or "d3" in content.lower()
 
     @patch("cogmem.engine.visualize.detect_workspace", return_value=None)
     @patch("cogmem.engine.visualize.GlobalTier")
