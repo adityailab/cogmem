@@ -197,19 +197,23 @@ def _search_tier(
         repo = RepoTier(scope_path)
         index = repo.get_index()
 
-        # Query index
+        # Query index to get relevant file refs
         refs = index.query(cues.keywords)
         indexed_refs = {ref for ref, _ in refs}
+        use_index = bool(indexed_refs and cues.keywords)
 
-        # Load and score episodes
+        # Load and score episodes — filter by index when possible
         for ep in repo.list_episodes():
+            ref = f"episodes/{ep.filename}"
+            if use_index and ref not in indexed_refs:
+                continue
             data = ep.model_dump()
             data["_type"] = "episode"
             data["_score"] = compute_score(data, cues, tier_weight)
             data["_tier"] = "repo"
             matches.append(data)
 
-        # Load and score gists
+        # Gists — always load (small count, high value)
         for g in repo.list_gists():
             data = g.model_dump()
             data["_type"] = "gist"
@@ -217,7 +221,7 @@ def _search_tier(
             data["_tier"] = "repo"
             matches.append(data)
 
-        # Patterns
+        # Patterns — always load (small count, high value)
         for p in repo.list_patterns():
             data = p.model_dump()
             data["_type"] = "pattern"
@@ -225,7 +229,7 @@ def _search_tier(
             data["_tier"] = "repo"
             matches.append(data)
 
-        # Emotions (as dangers)
+        # Emotions (as dangers) — always load
         emotions = repo.get_emotions()
         for tag in emotions.tags:
             data = tag.model_dump()
@@ -234,15 +238,18 @@ def _search_tier(
             data["_tier"] = "repo"
             matches.append(data)
 
-        # Entities
+        # Entities — filter by index when possible
         for e in repo.list_entities():
+            ref = f"entities/{e.filename}"
+            if use_index and ref not in indexed_refs:
+                continue
             data = e.model_dump()
             data["_type"] = "entity"
             data["_score"] = compute_score(data, cues, tier_weight)
             data["_tier"] = "repo"
             matches.append(data)
 
-        # Prospective
+        # Prospective — always load (small count)
         for p in repo.list_prospectives():
             if not p.completed:
                 data = p.model_dump()
@@ -251,7 +258,7 @@ def _search_tier(
                 data["_tier"] = "repo"
                 matches.append(data)
 
-        # Spatial
+        # Spatial — always include
         spatial = repo.get_spatial()
         if spatial:
             data = spatial.model_dump()
@@ -336,9 +343,15 @@ def _assemble_output(
         "prospective": "prospective",
     }
 
+    # Collect zoom overrides from emotion tags
+    zoom_overrides: dict[str, str] = {}  # target -> "full" | "summary"
+    for m in matches:
+        if m.get("_type") == "danger" and m.get("zoom_override"):
+            zoom_overrides[m.get("target", "")] = m["zoom_override"]
+
     for m in matches:
         section = type_to_section.get(m.get("_type", ""), "episodes")
-        line = _format_memory_line(m)
+        line = _format_memory_line(m, zoom_overrides)
         if line:
             sections[section].append(line)
 
@@ -382,13 +395,30 @@ def _assemble_output(
     return "".join(output_parts)
 
 
-def _format_memory_line(m: dict) -> str:
+def _format_memory_line(m: dict, zoom_overrides: dict[str, str] | None = None) -> str:
     """Format a single memory match as a readable line."""
     mtype = m.get("_type", "")
     tier = m.get("_tier", "")
     tier_tag = f" [{tier}]" if tier != "repo" else ""
+    zoom_overrides = zoom_overrides or {}
 
     if mtype == "episode":
+        # Check if any touched file has a zoom override
+        zoom = None
+        for f in m.get("code_touched", []):
+            if f in zoom_overrides:
+                zoom = zoom_overrides[f]
+                break
+
+        if zoom == "full":
+            # Show full story instead of just trigger + learned
+            story = m.get("story", "")[:200]
+            learned = m.get("learned", "")
+            text = f"  {m.get('date', '?')}{tier_tag} — {m.get('trigger', '')}\n    {story}"
+            if learned:
+                text += f"\n    Learned: {learned}"
+            return text
+
         return f"  {m.get('date', '?')}{tier_tag} — {m.get('trigger', '')}: {m.get('learned', m.get('story', '')[:80])}"
 
     if mtype == "gist":

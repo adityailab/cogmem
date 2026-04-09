@@ -34,8 +34,12 @@ class EmotionsFile(MemoryBase):
             lines.append(f"**{tag.emotion.upper()}** (intensity: {tag.intensity})")
             if tag.reason:
                 lines.append(f"Reason: {tag.reason}")
+            if tag.last_reinforced:
+                lines.append(f"Last reinforced: {tag.last_reinforced}")
             if tag.retrieval_bias != RetrievalBias.BOOST:
                 lines.append(f"Bias: {tag.retrieval_bias}")
+            if tag.zoom_override:
+                lines.append(f"Zoom: {tag.zoom_override}")
             lines.append("")
         return "\n".join(lines)
 
@@ -65,8 +69,12 @@ class EmotionsFile(MemoryBase):
                     pass
             elif line.startswith("Reason:") and current:
                 current["reason"] = line[7:].strip()
+            elif line.startswith("Last reinforced:") and current:
+                current["last_reinforced"] = line[16:].strip()
             elif line.startswith("Bias:") and current:
                 current["retrieval_bias"] = line[5:].strip()
+            elif line.startswith("Zoom:") and current:
+                current["zoom_override"] = line[5:].strip()
 
         if current:
             tags.append(EmotionTag(**current))

@@ -20,7 +20,7 @@ from cogmem.tiers.workspace import WorkspaceTier, detect_workspace
 from cogmem.utils.repo_detect import find_repo_root
 
 
-def run_decay(cwd: str | None = None) -> str:
+def run_decay(cwd: str | None = None, dry_run: bool = False) -> str:
     """Run decay across all accessible tiers."""
     cwd_path = Path(cwd) if cwd else Path.cwd()
     results: list[str] = []
@@ -30,7 +30,7 @@ def run_decay(cwd: str | None = None) -> str:
     if repo_root:
         repo = RepoTier(repo_root)
         if repo.exists:
-            msg = _decay_repo(repo)
+            msg = _decay_repo(repo, dry_run=dry_run)
             results.append(msg)
     else:
         results.append("No repo found — skipping repo decay.")
@@ -83,7 +83,7 @@ def transition_episode_phase(episode: Episode, today: date | None = None) -> boo
 # Internal
 # ---------------------------------------------------------------------------
 
-def _decay_repo(repo: RepoTier) -> str:
+def _decay_repo(repo: RepoTier, dry_run: bool = False) -> str:
     """Apply decay to all memories in a repo."""
     today = date.today()
     stats: dict[str, int] = defaultdict(int)
@@ -97,7 +97,8 @@ def _decay_repo(repo: RepoTier) -> str:
         ep.strength = compute_new_strength(old_strength, DECAY_RATES["episode"], days)
         changed = transition_episode_phase(ep, today)
         if ep.strength != old_strength or changed:
-            ep.save(str(repo.dir.resolve(f"episodes/{ep.filename}")))
+            if not dry_run:
+                ep.save(str(repo.dir.resolve(f"episodes/{ep.filename}")))
             stats["episodes"] += 1
 
     # Patterns
@@ -108,7 +109,8 @@ def _decay_repo(repo: RepoTier) -> str:
         old = pat.strength
         pat.strength = compute_new_strength(old, DECAY_RATES["pattern"], days)
         if pat.strength != old:
-            pat.save(str(repo.dir.resolve(f"patterns/{pat.filename}")))
+            if not dry_run:
+                pat.save(str(repo.dir.resolve(f"patterns/{pat.filename}")))
             stats["patterns"] += 1
 
     # Prospective memories
@@ -121,7 +123,8 @@ def _decay_repo(repo: RepoTier) -> str:
         old = p.strength
         p.strength = compute_new_strength(old, DECAY_RATES["prospective"], days)
         if p.strength != old:
-            p.save(str(repo.dir.resolve(f"prospective/{p.filename}")))
+            if not dry_run:
+                p.save(str(repo.dir.resolve(f"prospective/{p.filename}")))
             stats["prospectives"] += 1
 
     # Emotions
@@ -137,7 +140,7 @@ def _decay_repo(repo: RepoTier) -> str:
         if tag.intensity != old:
             emotion_changed = True
             stats["emotions"] += 1
-    if emotion_changed:
+    if emotion_changed and not dry_run:
         repo.dir.write_text("emotions.md", emotions.to_markdown())
 
     # Entity strength
@@ -146,7 +149,8 @@ def _decay_repo(repo: RepoTier) -> str:
         old = entity.strength
         entity.strength = compute_new_strength(old, DECAY_RATES["spatial"], 1)
         if entity.strength != old:
-            entity.save(str(repo.dir.resolve(f"entities/{entity.filename}")))
+            if not dry_run:
+                entity.save(str(repo.dir.resolve(f"entities/{entity.filename}")))
             stats["entities"] += 1
 
     parts = [f"Repo {repo.repo_path.name} decay:"]

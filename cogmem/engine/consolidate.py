@@ -30,6 +30,7 @@ def consolidate(
     scope: str = "full",
     apply_file: str | None = None,
     cwd: str | None = None,
+    dry_run: bool = False,
 ) -> str:
     """Run consolidation across tiers.
 
@@ -45,7 +46,7 @@ def consolidate(
     if scope in ("full", "repo"):
         repo_root = find_repo_root(cwd_path)
         if repo_root:
-            msg = consolidate_repo(RepoTier(repo_root))
+            msg = consolidate_repo(RepoTier(repo_root), dry_run=dry_run)
             results.append(msg)
         else:
             results.append("No repo found — skipping repo consolidation.")
@@ -69,7 +70,7 @@ def consolidate(
 # Repo consolidation
 # ---------------------------------------------------------------------------
 
-def consolidate_repo(repo: RepoTier) -> str:
+def consolidate_repo(repo: RepoTier, dry_run: bool = False) -> str:
     """Five-phase repo consolidation."""
     if not repo.exists:
         return f"Repo {repo.repo_path.name}: not initialized."
@@ -96,7 +97,8 @@ def consolidate_repo(repo: RepoTier) -> str:
                 ep.story = ep.compress("summary")
             elif new_phase == Phase.STUB:
                 ep.story = ep.compress("stub")
-            ep.save(str(repo.dir.resolve(f"episodes/{ep.filename}")))
+            if not dry_run:
+                ep.save(str(repo.dir.resolve(f"episodes/{ep.filename}")))
             stats["phase_transitions"] += 1
 
     # Phase 2 — Pattern extraction (find recurring themes)
@@ -139,7 +141,8 @@ def consolidate_repo(repo: RepoTier) -> str:
             strength=min(1.0, 0.3 + 0.1 * len(eps)),
             danger_level="medium" if dominant_emotion in ("pain", "danger") else "low",
         )
-        repo.save_pattern(pattern)
+        if not dry_run:
+            repo.save_pattern(pattern)
         stats["patterns_created"] += 1
 
     # Phase 3 — Gist formation (update module gists from episodes)
@@ -164,7 +167,8 @@ def consolidate_repo(repo: RepoTier) -> str:
             if new_refs:
                 gist.formed_from.extend(new_refs[-5:])
                 gist.last_updated = today.isoformat()
-                repo.save_gist(gist)
+                if not dry_run:
+                    repo.save_gist(gist)
                 stats["gists_updated"] += 1
         # Don't auto-create gists — that requires LLM understanding
 
@@ -184,7 +188,8 @@ def consolidate_repo(repo: RepoTier) -> str:
                 tag.intensity = max(0.2, tag.intensity * decay_factor)
                 recalibrated += 1
     if recalibrated:
-        repo.dir.write_text("emotions.md", emotions.to_markdown())
+        if not dry_run:
+            repo.dir.write_text("emotions.md", emotions.to_markdown())
         stats["emotions_recalibrated"] = recalibrated
 
     # Phase 5 — Pruning
@@ -196,11 +201,11 @@ def consolidate_repo(repo: RepoTier) -> str:
                 ep.id in p.seen_in for p in repo.list_patterns()
             )
             if not has_references:
-                repo.dir.delete_file(f"episodes/{ep.filename}")
-                # Remove from index
-                index = repo.get_index()
-                index.remove_entry(f"episodes/{ep.filename}")
-                repo.save_index(index)
+                if not dry_run:
+                    repo.dir.delete_file(f"episodes/{ep.filename}")
+                    index = repo.get_index()
+                    index.remove_entry(f"episodes/{ep.filename}")
+                    repo.save_index(index)
                 stubs_deleted += 1
     stats["stubs_pruned"] = stubs_deleted
 
@@ -209,7 +214,8 @@ def consolidate_repo(repo: RepoTier) -> str:
     for entity in repo.list_entities():
         full_path = repo.repo_path / entity.file_path
         if not full_path.exists():
-            repo.dir.delete_file(f"entities/{entity.filename}")
+            if not dry_run:
+                repo.dir.delete_file(f"entities/{entity.filename}")
             orphans += 1
     stats["orphaned_entities"] = orphans
 

@@ -62,11 +62,14 @@ def intentions():
 # Encoding
 # ---------------------------------------------------------------------------
 
+EMOTION_CHOICES = ["pain", "danger", "trust", "pride", "frustration", "relief", "curiosity", "neutral"]
+
+
 @cli.command()
 @click.option("--event", help="Event description.")
 @click.option("--manual", help="Manual memory text.")
-@click.option("--emotion", default="neutral", help="Emotion type.")
-@click.option("--intensity", default=0.5, type=float, help="Emotion intensity 0-1.")
+@click.option("--emotion", default="neutral", type=click.Choice(EMOTION_CHOICES), help="Emotion type.")
+@click.option("--intensity", default=0.5, type=click.FloatRange(0.0, 1.0), help="Emotion intensity 0-1.")
 @click.option("--files", multiple=True, help="Files involved.")
 @click.option("--learned", default="", help="Key takeaway.")
 def encode(event, manual, emotion, intensity, files, learned):
@@ -113,6 +116,15 @@ def encode_annotations():
     click.echo(result)
 
 
+@cli.command("encode-session")
+def encode_session():
+    """Process queued hook events into episodes."""
+    from cogmem.engine.encode import finalize_session
+
+    result = finalize_session()
+    click.echo(result)
+
+
 # ---------------------------------------------------------------------------
 # Visualization
 # ---------------------------------------------------------------------------
@@ -135,20 +147,26 @@ def visualize(output, no_open):
 @cli.command()
 @click.option("--scope", default="full", type=click.Choice(["full", "repo", "workspace"]))
 @click.option("--apply", "apply_file", default=None, help="Apply subagent result file.")
-def consolidate(scope, apply_file):
+@click.option("--dry-run", is_flag=True, help="Show what would change without writing.")
+def consolidate(scope, apply_file, dry_run):
     """Consolidate and strengthen memories."""
     from cogmem.engine.consolidate import consolidate as do_consolidate
 
-    result = do_consolidate(scope=scope, apply_file=apply_file)
+    if dry_run:
+        click.echo("[DRY RUN] — no changes will be written.\n")
+    result = do_consolidate(scope=scope, apply_file=apply_file, dry_run=dry_run)
     click.echo(result)
 
 
 @cli.command()
-def decay():
+@click.option("--dry-run", is_flag=True, help="Show what would change without writing.")
+def decay(dry_run):
     """Run decay on all memories."""
     from cogmem.engine.decay import run_decay
 
-    result = run_decay()
+    if dry_run:
+        click.echo("[DRY RUN] — no changes will be written.\n")
+    result = run_decay(dry_run=dry_run)
     click.echo(result)
 
 

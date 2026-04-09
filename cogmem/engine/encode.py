@@ -82,7 +82,6 @@ def encode(
         index = repo.get_index()
         keywords = extract_keywords(f"{event} {learned} {' '.join(code_touched)}")
         index.add_entry(keywords, f"episodes/{ep.filename}")
-        repo.save_index(index)
 
         # Update emotions if significant
         if intensity >= 0.6 and emotion != "neutral":
@@ -95,7 +94,14 @@ def encode(
                     last_reinforced=today,
                 ))
 
-        return f"Encoded episode: {ep.filename} (repo: {repo_path.name})"
+        # Post-encode side effects
+        notices = _post_encode(repo, ep, keywords, index)
+        repo.save_index(index)
+
+        msg = f"Encoded episode: {ep.filename} (repo: {repo_path.name})"
+        if notices:
+            msg += "\n" + "\n".join(notices)
+        return msg
 
     else:
         # Cross-repo episode -> workspace
@@ -284,6 +290,136 @@ def encode_annotations(cwd: str | None = None) -> str:
 
     repo.save_index(index)
     return f"Encoded {count} annotations as episodes."
+
+
+# ---------------------------------------------------------------------------
+# Post-encode side effects
+# ---------------------------------------------------------------------------
+
+def _post_encode(
+    repo: RepoTier,
+    episode: Episode,
+    keywords: list[str],
+    index: "KeywordIndex",
+) -> list[str]:
+    """Run side effects after encoding: prospective completion, pattern matching, cross-refs."""
+    notices: list[str] = []
+    today = date.today().isoformat()
+
+    # 1. Check prospective memory completion
+    for p in repo.list_prospectives():
+        if p.completed:
+            continue
+        if p.matches_context(episode.code_touched, keywords):
+            p.completed = True
+            p.save(str(repo.dir.resolve(f"prospective/{p.filename}")))
+            episode.triggered_prospective.append(p.id)
+            notices.append(f"  Completed intention: {p.intention}")
+
+    # 2. Match against existing patterns
+    for pat in repo.list_patterns():
+        if not pat.trigger_cues:
+            continue
+        overlap = set(kw.lower() for kw in keywords) & set(c.lower() for c in pat.trigger_cues)
+        if overlap:
+            pat.frequency += 1
+            pat.last_seen = today
+            if episode.id not in pat.seen_in:
+                pat.seen_in.append(episode.id)
+            pat.save(str(repo.dir.resolve(f"patterns/{pat.filename}")))
+            if episode.id not in episode.related_patterns:
+                episode.related_patterns.append(pat.id)
+            notices.append(f"  Matched pattern: {pat.name} (seen {pat.frequency}x)")
+
+    # 3. Cross-reference with related episodes (same files)
+    if episode.code_touched:
+        file_keywords = []
+        for f in episode.code_touched[:5]:
+            file_keywords.extend(extract_keywords(f))
+        if file_keywords:
+            refs = index.query(file_keywords)
+            related = []
+            for ref, count in refs[:5]:
+                if ref.startswith("episodes/") and ref != f"episodes/{episode.filename}":
+                    related.append(ref)
+            if related:
+                episode.related_episodes = related[:3]
+
+    # Re-save episode if side effects modified it
+    if episode.triggered_prospective or episode.related_patterns or episode.related_episodes:
+        episode.save(str(repo.dir.resolve(f"episodes/{episode.filename}")))
+
+    return notices
+
+
+def finalize_session(cwd: str | None = None) -> str:
+    """Process queued hook events into episode(s).
+
+    Reads sessions/current.json, groups events by file cluster,
+    creates summary episodes, and clears the queue.
+    """
+    from collections import defaultdict
+
+    cwd_path = Path(cwd) if cwd else Path.cwd()
+    repo_root = find_repo_root(cwd_path)
+    if not repo_root:
+        # Fall back to cwd
+        repo_root = cwd_path
+
+    repo = RepoTier(repo_root)
+    if not repo.exists:
+        return "No memory initialized."
+
+    session_file = repo.dir.resolve("sessions/current.json")
+    if not session_file.exists():
+        return "No session events to process."
+
+    try:
+        with open(session_file) as f:
+            events = json.load(f)
+    except (json.JSONDecodeError, ValueError):
+        return "Could not parse session file."
+
+    if not events:
+        return "No session events to process."
+
+    # Group events by file
+    file_events: dict[str, list[dict]] = defaultdict(list)
+    for ev in events:
+        file_events[ev.get("file", "unknown")].append(ev)
+
+    today = date.today().isoformat()
+    index = repo.get_index()
+    created = 0
+
+    # Create one episode per file cluster
+    files_touched = list(file_events.keys())
+    tools_used = set()
+    for ev_list in file_events.values():
+        for ev in ev_list:
+            tools_used.add(ev.get("tool", ""))
+
+    ep = Episode(
+        date=today,
+        trigger=f"Session: edited {len(files_touched)} files",
+        story=f"Used {', '.join(tools_used)} on: {', '.join(files_touched[:10])}",
+        code_touched=files_touched,
+        source=EpisodeSource.AUTO_GENERATED,
+        source_confidence=0.6,
+        strength=0.8,
+        phase=Phase.VIVID,
+    )
+    ep.save(str(repo.dir.resolve(f"episodes/{ep.filename}")))
+    keywords = extract_keywords(" ".join(files_touched))
+    index.add_entry(keywords, f"episodes/{ep.filename}")
+    created += 1
+
+    repo.save_index(index)
+
+    # Clear session queue
+    session_file.unlink()
+
+    return f"Finalized session: {created} episode from {len(events)} events ({len(files_touched)} files)."
 
 
 # ---------------------------------------------------------------------------
