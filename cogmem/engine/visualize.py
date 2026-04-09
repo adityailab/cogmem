@@ -932,8 +932,7 @@ function dragged(event, d) {{
 }}
 function dragEnded(event, d) {{
     if (!event.active) simulation.alphaTarget(0);
-    d.fx = null;
-    d.fy = null;
+    // Keep node pinned where you dropped it
 }}
 
 // ---------------------------------------------------------------------------
