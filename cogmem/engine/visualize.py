@@ -437,10 +437,11 @@ svg {{
 
 /* Region labels */
 .region-label {{
-    font-size: 11px;
-    fill: rgba(255, 255, 255, 0.15);
+    font-size: 13px;
+    fill: rgba(255, 255, 255, 0.55);
     text-transform: uppercase;
     letter-spacing: 3px;
+    font-weight: 600;
     pointer-events: none;
 }}
 
@@ -735,41 +736,53 @@ const links = DATA.links.filter(l =>
 
 // Assign region center positions — spread around a circle like brain lobes
 const cx = width / 2, cy = height / 2;
-const R = Math.min(width, height) * 0.32;
-const regionCenters = {{
-    semantic:    {{ x: cx,              y: cy - R * 1.1 }},       // top center (frontal)
-    episodic:    {{ x: cx - R * 0.95,   y: cy - R * 0.45 }},     // upper left (temporal)
-    spatial:     {{ x: cx + R * 0.95,   y: cy - R * 0.45 }},     // upper right (parietal)
-    pattern:     {{ x: cx - R * 1.05,   y: cy + R * 0.5 }},      // lower left
-    prospective: {{ x: cx + R * 1.05,   y: cy + R * 0.5 }},      // lower right
-    emotional:   {{ x: cx,              y: cy + R * 1.1 }},       // bottom center (limbic)
-    entity:      {{ x: cx,              y: cy }},                  // center (core)
-}};
 
-// Initialize positions near region centers with spread proportional to count
+// Scale the whole layout based on total node count
+const totalNodes = nodes.length;
+const scaleFactor = Math.max(1, Math.sqrt(totalNodes / 50));
+const R = Math.min(width, height) * 0.3 * scaleFactor;
+
 const regionCounts = {{}};
 nodes.forEach(n => {{ regionCounts[n.region] = (regionCounts[n.region] || 0) + 1; }});
 
+// Place regions around the center — spread proportional to scale
+const regionCenters = {{
+    semantic:    {{ x: cx,            y: cy - R * 1.0 }},
+    episodic:    {{ x: cx - R * 0.9,  y: cy - R * 0.35 }},
+    spatial:     {{ x: cx + R * 0.9,  y: cy - R * 0.35 }},
+    pattern:     {{ x: cx - R * 1.0,  y: cy + R * 0.5 }},
+    prospective: {{ x: cx + R * 1.0,  y: cy + R * 0.5 }},
+    emotional:   {{ x: cx,            y: cy + R * 1.0 }},
+    entity:      {{ x: cx,            y: cy }},
+}};
+
+// Initialize positions — spread proportional to region count
 nodes.forEach(n => {{
     const center = regionCenters[n.region] || {{ x: cx, y: cy }};
     const count = regionCounts[n.region] || 1;
-    const spread = Math.min(200, 40 + Math.sqrt(count) * 18);
-    n.x = center.x + (Math.random() - 0.5) * spread;
-    n.y = center.y + (Math.random() - 0.5) * spread;
+    // Spread grows with sqrt of count — bigger regions get more space
+    const spread = 20 + Math.sqrt(count) * 12;
+    // Use golden angle distribution for even spread
+    const i = nodes.filter(m => m.region === n.region).indexOf(n);
+    const angle = i * 2.4; // golden angle in radians
+    const r = spread * Math.sqrt(i + 1) / Math.sqrt(count + 1);
+    n.x = center.x + Math.cos(angle) * r;
+    n.y = center.y + Math.sin(angle) * r;
 }});
 
 const simulation = d3.forceSimulation(nodes)
-    .force('link', d3.forceLink(links).id(d => d.id).distance(50).strength(d => d.strength * 0.2))
+    .force('link', d3.forceLink(links).id(d => d.id).distance(60).strength(d => d.strength * 0.1))
     .force('charge', d3.forceManyBody().strength(d => {{
-        // Entities repel less so they stay compact; others repel more to spread out
-        if (d.region === 'entity') return -15 - d.size * 1.5;
-        return -30 - d.size * 4;
+        // Repulsion scales with node count — more nodes = more push
+        const regionSize = regionCounts[d.region] || 1;
+        if (d.region === 'entity') return -3 - Math.sqrt(regionSize) * 0.5;
+        return -20 - d.size * 3;
     }}))
-    .force('center', d3.forceCenter(cx, cy).strength(0.01))
-    .force('collision', d3.forceCollide().radius(d => d.size + 3).strength(0.7))
-    .force('cluster', clusterForce(0.3))
-    .force('regionRepel', regionRepelForce(0.5))
-    .alphaDecay(0.015);
+    .force('center', d3.forceCenter(cx, cy).strength(0.005))
+    .force('collision', d3.forceCollide().radius(d => d.size + 4).strength(0.9))
+    .force('cluster', clusterForce(0.25))
+    .force('regionRepel', regionRepelForce(1.0))
+    .alphaDecay(0.01);
 
 function clusterForce(strength) {{
     return function(alpha) {{
@@ -783,7 +796,7 @@ function clusterForce(strength) {{
     }};
 }}
 
-// Push nodes from OTHER regions away from each other's centers
+// Strong repulsion between different region centers
 function regionRepelForce(strength) {{
     return function(alpha) {{
         nodes.forEach(n => {{
@@ -792,7 +805,10 @@ function regionRepelForce(strength) {{
                 const dx = n.x - center.x;
                 const dy = n.y - center.y;
                 const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                const minDist = R * 0.5;
+                // Min distance scales with both regions' sizes
+                const mySize = Math.sqrt(regionCounts[n.region] || 1) * 8;
+                const otherSize = Math.sqrt(regionCounts[region] || 1) * 8;
+                const minDist = mySize + otherSize + 40;
                 if (dist < minDist) {{
                     const force = (minDist - dist) / dist * strength * alpha;
                     n.vx += dx * force;
@@ -819,10 +835,22 @@ const LINK_LABELS = {{
     seen_in: 'seen in',
 }};
 
-const linkElements = linkG.selectAll('line')
+// Assign each link a curve offset to separate overlapping links
+const linkCurveMap = {{}};
+links.forEach((l, i) => {{
+    const sid = typeof l.source === 'object' ? l.source.id : l.source;
+    const tid = typeof l.target === 'object' ? l.target.id : l.target;
+    const pairKey = [sid, tid].sort().join('|');
+    if (!linkCurveMap[pairKey]) linkCurveMap[pairKey] = 0;
+    l._curveIndex = linkCurveMap[pairKey];
+    linkCurveMap[pairKey]++;
+}});
+
+const linkElements = linkG.selectAll('path')
     .data(links)
-    .enter().append('line')
+    .enter().append('path')
     .attr('class', d => `link ${{d.type}}`)
+    .attr('fill', 'none')
     .attr('stroke-width', d => 0.5 + d.strength * 1.5)
     .on('mouseover', function(event, d) {{
         d3.select(this).attr('stroke-opacity', 0.8).attr('stroke-width', 3);
@@ -844,20 +872,28 @@ const linkElements = linkG.selectAll('line')
         event.stopPropagation();
         const sid = typeof d.source === 'object' ? d.source.id : d.source;
         const tid = typeof d.target === 'object' ? d.target.id : d.target;
-        const linkKey = sid + '|' + tid;
-        // Single click: add link (nodes become neighbors, not primary)
-        selectedLinks.add(linkKey);
+        selectedLinks.add(sid + '|' + tid);
         renderSelection();
     }})
     .on('dblclick', function(event, d) {{
         event.stopPropagation();
         const sid = typeof d.source === 'object' ? d.source.id : d.source;
         const tid = typeof d.target === 'object' ? d.target.id : d.target;
-        const linkKey = sid + '|' + tid;
-        // Double click: remove from selection
-        selectedLinks.delete(linkKey);
+        selectedLinks.delete(sid + '|' + tid);
         renderSelection();
     }});
+
+function curvedPath(d) {{
+    const sx = d.source.x, sy = d.source.y;
+    const tx = d.target.x, ty = d.target.y;
+    const dx = tx - sx, dy = ty - sy;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    // Curve amount: proportional to distance, offset for parallel links
+    const curvature = 0.15 + (d._curveIndex || 0) * 0.1;
+    const mx = (sx + tx) / 2 + dy * curvature;
+    const my = (sy + ty) / 2 - dx * curvature;
+    return `M${{sx}},${{sy}} Q${{mx}},${{my}} ${{tx}},${{ty}}`;
+}}
 
 // Nodes
 const nodeG = g.append('g').attr('class', 'nodes');
@@ -898,23 +934,23 @@ nodeElements.append('text')
     .attr('dy', 3)
     .text(d => d.label);
 
-// Region labels
+// Region labels — offset based on position relative to center
 Object.entries(regionCenters).forEach(([region, pos]) => {{
+    const count = regionCounts[region] || 0;
+    // Place label above the region, but account for region size
+    const regionSize = regionCounts[region] || 0;
+    const labelOffset = -Math.sqrt(regionSize + 1) * 8 - 20;
     g.append('text')
         .attr('class', 'region-label')
         .attr('x', pos.x)
-        .attr('y', pos.y - 100)
+        .attr('y', pos.y + labelOffset)
         .attr('text-anchor', 'middle')
-        .text(region.toUpperCase());
+        .text(region.toUpperCase() + (count > 0 ? '' : ''));
 }});
 
 // Tick
 simulation.on('tick', () => {{
-    linkElements
-        .attr('x1', d => d.source.x)
-        .attr('y1', d => d.source.y)
-        .attr('x2', d => d.target.x)
-        .attr('y2', d => d.target.y);
+    linkElements.attr('d', curvedPath);
     nodeElements
         .attr('transform', d => `translate(${{d.x}},${{d.y}})`);
 }});
@@ -947,6 +983,7 @@ document.getElementById('reset-btn').addEventListener('click', (e) => {{
     renderSelection();
     document.getElementById('search-input').value = '';
     simulation.alpha(1).restart();
+    setTimeout(() => zoomToFit(true), 1500);
 }});
 
 // ---------------------------------------------------------------------------
@@ -1202,19 +1239,27 @@ document.addEventListener('keydown', (e) => {{
     }}
 }});
 
-// Initial zoom to fit
-setTimeout(() => {{
+// Zoom to fit all content
+function zoomToFit(animate) {{
     const bounds = g.node().getBBox();
-    const fullWidth = bounds.width;
-    const fullHeight = bounds.height;
-    const midX = bounds.x + fullWidth / 2;
-    const midY = bounds.y + fullHeight / 2;
-    const scale = 0.8 / Math.max(fullWidth / width, fullHeight / height);
-    svg.transition().duration(1000).call(
-        zoom.transform,
-        d3.zoomIdentity.translate(width / 2 - midX * scale, height / 2 - midY * scale).scale(scale)
-    );
-}}, 2000);
+    if (bounds.width === 0 || bounds.height === 0) return;
+    const fullWidth = bounds.width + 100;  // padding
+    const fullHeight = bounds.height + 100;
+    const midX = bounds.x + bounds.width / 2;
+    const midY = bounds.y + bounds.height / 2;
+    const scale = 0.85 / Math.max(fullWidth / width, fullHeight / height);
+    const transform = d3.zoomIdentity
+        .translate(width / 2 - midX * scale, height / 2 - midY * scale)
+        .scale(scale);
+    if (animate) {{
+        svg.transition().duration(800).call(zoom.transform, transform);
+    }} else {{
+        svg.call(zoom.transform, transform);
+    }}
+}}
+
+// Fit on initial load after simulation settles
+setTimeout(() => zoomToFit(true), 2000);
 
 </script>
 </body>
@@ -1672,9 +1717,9 @@ Object.entries(regionCenters3D).forEach(([region, pos]) => {{
     const count = nodes.filter(n => n.region === region).length;
     // show all regions, even with zero count
     const sprite = makeTextSprite(region.toUpperCase(), {{
-        fontSize: 14,
+        fontSize: 16,
         color: REGION_COLORS_CSS[region] || '#ffffff',
-        opacity: 0.15,
+        opacity: 0.55,
     }});
     sprite.position.set(pos.x, pos.y + 35, pos.z);
     sprite.scale.set(60, 30, 1);
